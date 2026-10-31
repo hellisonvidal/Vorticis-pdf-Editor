@@ -552,3 +552,69 @@ class VerifyDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+
+
+# ====================================================================== novo PDF
+class NewPdfDialog(QDialog):
+    def __init__(self, parent=None):
+        from .document import BACKGROUNDS, PAGE_SIZES
+        super().__init__(parent)
+        self.setWindowTitle("Novo PDF")
+        self.setMinimumWidth(460)
+        st = settings()
+        lay = QVBoxLayout(self)
+        intro = QLabel("Crie um documento em branco e depois use as ferramentas para adicionar "
+                       "texto, imagens, formas, desenhos e assinaturas.")
+        intro.setWordWrap(True)
+        intro.setObjectName("Muted")
+        lay.addWidget(intro)
+        form = QFormLayout()
+        self.title = QLineEdit()
+        self.title.setPlaceholderText("opcional")
+        form.addRow("Título:", self.title)
+        self.size = QComboBox()
+        for name, wh in PAGE_SIZES.items():
+            self.size.addItem(name, wh)
+        self.size.addItem("Personalizado (mm)...", None)
+        self.size.setCurrentIndex(max(0, self.size.findText(st.value("new_size", "A4 (210 × 297 mm)"))))
+        form.addRow("Tamanho:", self.size)
+        cust = QHBoxLayout()
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self.cw = QDoubleSpinBox(minimum=20, maximum=5000, value=210, suffix=" mm", decimals=0)
+        self.ch = QDoubleSpinBox(minimum=20, maximum=5000, value=297, suffix=" mm", decimals=0)
+        cust.addWidget(self.cw)
+        cust.addWidget(QLabel("×"))
+        cust.addWidget(self.ch)
+        self.cust_w = QWidget()
+        self.cust_w.setLayout(cust)
+        form.addRow("", self.cust_w)
+        self.orient = QComboBox()
+        self.orient.addItems(["Retrato", "Paisagem"])
+        form.addRow("Orientação:", self.orient)
+        from PySide6.QtWidgets import QSpinBox
+        self.pages = QSpinBox(minimum=1, maximum=500, value=1)
+        form.addRow("Páginas:", self.pages)
+        self.bg = QComboBox()
+        for key, name in BACKGROUNDS.items():
+            self.bg.addItem(name, key)
+        form.addRow("Fundo:", self.bg)
+        lay.addLayout(form)
+        bb = QDialogButtonBox(QDialogButtonBox.Cancel)
+        bb.addButton("Criar", QDialogButtonBox.AcceptRole).setDefault(True)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.size.currentIndexChanged.connect(lambda _i: self.cust_w.setVisible(self.size.currentData() is None))
+        self.cust_w.setVisible(self.size.currentData() is None)
+
+    def values(self):
+        wh = self.size.currentData()
+        if wh is None:
+            wh = (self.cw.value() * 72 / 25.4, self.ch.value() * 72 / 25.4)
+        else:
+            settings().setValue("new_size", self.size.currentText())
+        w, h = min(wh), max(wh)
+        if self.orient.currentIndex() == 1:
+            w, h = h, w
+        return dict(width=w, height=h, pages=self.pages.value(), background=self.bg.currentData(),
+                    title=self.title.text().strip())

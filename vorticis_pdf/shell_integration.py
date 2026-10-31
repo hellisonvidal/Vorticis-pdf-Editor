@@ -6,7 +6,10 @@ Menu criado para arquivos .pdf:
                      Organizar páginas | Imprimir | Converter para...
 Para documentos do Office/imagens:
     Vorticis PDF  ▸  Converter para PDF | Unir como PDF
-No Windows 11 os itens aparecem em "Mostrar mais opções" (ou Shift+F10).
+
+Windows 11: o menu compacto esconde opções de programas em "Mostrar mais opções".
+enable_full_menu() ativa (só para o usuário atual, sem administrador e de forma reversível)
+o menu completo do Windows, que mostra as opções do Vorticis direto no primeiro clique.
 """
 from __future__ import annotations
 
@@ -16,6 +19,11 @@ from pathlib import Path
 
 
 from .converters import OFFICE_TO_PDF, NATIVE_TO_PDF
+
+# CLSID do menu compacto do Windows 11; um InprocServer32 vazio em HKCU faz o Explorer
+# usar o menu completo (o mesmo de "Mostrar mais opções") diretamente.
+FULL_MENU_KEY = r"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+OWN_KEY = r"Software\Vorticis\PDFEditor"
 
 PROGID = "VorticisPDF.Document"
 MENU_KEY = "VorticisPDF"
@@ -174,3 +182,74 @@ def _notify_shell():
         ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
     except Exception:
         pass
+
+
+# ------------------------------------------------------------------ Windows 11: menu completo
+def is_windows11() -> bool:
+    return sys.platform.startswith("win") and sys.getwindowsversion().build >= 22000
+
+
+def full_menu_enabled() -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    import winreg
+    try:
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, FULL_MENU_KEY + r"\InprocServer32")
+        val, _ = winreg.QueryValueEx(k, "")
+        winreg.CloseKey(k)
+        return val == ""
+    except OSError:
+        return False
+
+
+def enable_full_menu(restart=True) -> str:
+    """Mostra as opções do Vorticis (e de outros programas) direto no menu do botão direito
+    do Windows 11, sem precisar de "Mostrar mais opções". Vale só para o usuário atual."""
+    if not sys.platform.startswith("win"):
+        raise OSError("Disponível apenas no Windows.")
+    import winreg
+    already = full_menu_enabled()
+    key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, FULL_MENU_KEY + r"\InprocServer32", 0,
+                             winreg.KEY_WRITE)
+    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "")
+    winreg.CloseKey(key)
+    if not already:  # lembra que fomos nós que ativamos (para desfazer ao desinstalar)
+        _set(winreg, OWN_KEY, {"FullMenuSetByVorticis": "1"})
+    if restart:
+        restart_explorer()
+    return ("Pronto! As opções do Vorticis agora aparecem direto no menu do botão direito, "
+            "sem precisar clicar em “Mostrar mais opções”.")
+
+
+def disable_full_menu(only_if_ours=False, restart=True) -> str:
+    if not sys.platform.startswith("win"):
+        raise OSError("Disponível apenas no Windows.")
+    import winreg
+    ours = False
+    try:
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, OWN_KEY)
+        ours = winreg.QueryValueEx(k, "FullMenuSetByVorticis")[0] == "1"
+        winreg.CloseKey(k)
+    except OSError:
+        pass
+    if only_if_ours and not ours:
+        return "Menu completo não foi ativado pelo Vorticis; nada a desfazer."
+    _delete_tree(winreg, FULL_MENU_KEY)
+    try:
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, OWN_KEY, 0, winreg.KEY_SET_VALUE)
+        winreg.DeleteValue(k, "FullMenuSetByVorticis")
+        winreg.CloseKey(k)
+    except OSError:
+        pass
+    if restart:
+        restart_explorer()
+    return "Menu compacto do Windows 11 restaurado."
+
+
+def restart_explorer():
+    """Reinicia o Windows Explorer para aplicar a mudança do menu (as janelas de pastas
+    abertas são fechadas e a barra de tarefas pisca por um instante)."""
+    import subprocess
+    flags = 0x08000000
+    subprocess.run(["taskkill", "/f", "/im", "explorer.exe"], capture_output=True, creationflags=flags)
+    subprocess.Popen(["explorer.exe"], creationflags=flags)

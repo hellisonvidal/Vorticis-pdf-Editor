@@ -52,6 +52,9 @@ _P = {
     "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     "copy": '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
+    "shapes": '<rect x="3" y="13" width="8" height="8" rx="1"/><circle cx="17" cy="7" r="4"/><path d="M14 21l3.5-6 3.5 6z"/>',
+    "pen": '<path d="M3 21c3-1 4.5-3 6-5.5S12 9 15 6l3 3c-3 3-5.5 4.5-8 6S4 18 3 21z"/><path d="M14 7l3 3M18 3l3 3-3 3-3-3z"/>',
+    "new_file": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/>',
     "font": '<path d="M4 20L10 4h1l6 16M6.5 14h8"/><path d="M17 20h4"/>',
 }
 

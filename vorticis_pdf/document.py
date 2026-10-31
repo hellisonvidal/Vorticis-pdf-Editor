@@ -53,7 +53,200 @@ def open_any(path: str) -> pymupdf.Document:
     return doc
 
 
-class PdfDocument:
+# ====================================================================== formas e anotações
+SHAPES = {
+    "rect": "Retângulo", "ellipse": "Elipse / círculo", "line": "Linha", "arrow": "Seta",
+    "double_arrow": "Seta dupla", "triangle": "Triângulo", "diamond": "Losango", "star": "Estrela",
+    "check": "Visto (✓)", "cross": "Xis (✗)",
+}
+SHAPE_TYPES = {"Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "FreeText", "Text",
+               "Stamp", "Highlight", "Underline", "StrikeOut", "Squiggly", "Caret", "FileAttachment"}
+DEFAULT_STYLE = {"stroke": (0.84, 0.14, 0.18), "fill": None, "width": 2.0, "opacity": 1.0, "dashed": False}
+
+
+def shape_points(kind, p1, p2):
+    """Vértices (para polígonos/traços) de uma forma desenhada de p1 até p2."""
+    x0, y0 = min(p1[0], p2[0]), min(p1[1], p2[1])
+    x1, y1 = max(p1[0], p2[0]), max(p1[1], p2[1])
+    w, h = x1 - x0, y1 - y0
+    cx, cy = x0 + w / 2, y0 + h / 2
+    if kind == "triangle":
+        return [(cx, y0), (x1, y1), (x0, y1)]
+    if kind == "diamond":
+        return [(cx, y0), (x1, cy), (cx, y1), (x0, cy)]
+    if kind == "star":
+        import math
+        pts = []
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            r = 1.0 if i % 2 == 0 else 0.4
+            pts.append((cx + r * w / 2 * math.cos(ang), cy + r * h / 2 * math.sin(ang)))
+        return pts
+    if kind == "check":
+        return [[(x0, y0 + h * 0.55), (x0 + w * 0.38, y1), (x1, y0)]]
+    if kind == "cross":
+        return [[(x0, y0), (x1, y1)], [(x1, y0), (x0, y1)]]
+    return [p1, p2]
+
+
+def _apply_style(annot, style, author=""):
+    s = dict(DEFAULT_STYLE, **(style or {}))
+    annot.set_border(width=s["width"], dashes=[4, 3] if s["dashed"] else None)
+    fill = s["fill"]
+    t = annot.type[1]
+    if t in ("Line",):  # o "preenchimento" da linha é a cor das pontas da seta
+        fill = s["stroke"]
+    if t in ("Ink", "PolyLine"):
+        annot.set_colors(stroke=s["stroke"])
+    else:
+        annot.set_colors(stroke=s["stroke"], fill=fill)
+    annot.set_opacity(s["opacity"])
+    annot.set_info(title=author or os.environ.get("USERNAME") or os.environ.get("USER") or APP_NAME,
+                   subject="Forma")
+    annot.update()
+    return annot
+
+
+def _annot_style(annot) -> dict:
+    colors, border = annot.colors or {}, annot.border or {}
+    op = annot.opacity
+    return {"stroke": tuple(colors.get("stroke") or (0, 0, 0)),
+            "fill": tuple(colors["fill"]) if colors.get("fill") else None,
+            "width": border.get("width", 1) if border.get("width", -1) >= 0 else 1,
+            "opacity": op if op is not None and op >= 0 else 1.0,
+            "dashed": bool(border.get("dashes"))}
+
+
+def _shift(points, dx, dy):
+    if points and isinstance(points[0], (list, tuple)) and points[0] and isinstance(points[0][0], (list, tuple)):
+        return [[(x + dx, y + dy) for x, y in stroke] for stroke in points]
+    return [(x + dx, y + dy) for x, y in points]
+
+
+def _find_annot(page, xref):
+    for a in page.annots():
+        if a.xref == xref:
+            return a
+    return None
+
+
+class _ShapeOps:
+    """Operações de formas/anotações (misturadas em PdfDocument)."""
+
+    def add_shape(self, page_no, kind, p1, p2, style=None):
+        self.checkpoint(f"Inseriu forma ({SHAPES.get(kind, kind)}) na página {page_no + 1}")
+        page = self.doc[page_no]
+        r = pymupdf.Rect(p1, p2)
+        r.normalize()
+        if kind == "rect":
+            a = page.add_rect_annot(r)
+        elif kind == "ellipse":
+            a = page.add_circle_annot(r)
+        elif kind in ("line", "arrow", "double_arrow"):
+            a = page.add_line_annot(pymupdf.Point(p1), pymupdf.Point(p2))
+            le = pymupdf.PDF_ANNOT_LE_CLOSED_ARROW
+            if kind == "arrow":
+                a.set_line_ends(pymupdf.PDF_ANNOT_LE_NONE, le)
+            elif kind == "double_arrow":
+                a.set_line_ends(le, le)
+        elif kind in ("triangle", "diamond", "star"):
+            a = page.add_polygon_annot(shape_points(kind, p1, p2))
+        elif kind in ("check", "cross"):
+            a = page.add_ink_annot(shape_points(kind, p1, p2))
+        else:
+            raise ValueError(kind)
+        return _apply_style(a, style).xref
+
+    def add_ink(self, page_no, points, style=None):
+        self.checkpoint(f"Desenho livre na página {page_no + 1}")
+        a = self.doc[page_no].add_ink_annot([[(float(x), float(y)) for x, y in points]])
+        return _apply_style(a, style).xref
+
+    def markup_text(self, page_no, rects, kind="highlight", color=None):
+        names = {"highlight": "Destacou", "underline": "Sublinhou", "strikeout": "Riscou"}
+        self.checkpoint(f"{names[kind]} texto na página {page_no + 1}")
+        page = self.doc[page_no]
+        rects = [pymupdf.Rect(r) for r in rects]
+        fn = {"highlight": page.add_highlight_annot, "underline": page.add_underline_annot,
+              "strikeout": page.add_strikeout_annot}[kind]
+        a = fn(rects)
+        default = {"highlight": (1, 0.9, 0), "underline": (0.1, 0.35, 0.9), "strikeout": (0.85, 0.1, 0.15)}
+        a.set_colors(stroke=color or default[kind])
+        a.update()
+        return a.xref
+
+    def delete_annot(self, page_no, xref):
+        page = self.doc[page_no]
+        a = _find_annot(page, xref)
+        if a is None:
+            return
+        self.checkpoint(f"Excluiu {a.type[1]} na página {page_no + 1}")
+        page.delete_annot(a)
+
+    def move_annot(self, page_no, xref, dx, dy) -> int:
+        """Move uma anotação; retorna o xref (pode mudar ao recriar linhas/polígonos)."""
+        page = self.doc[page_no]
+        a = _find_annot(page, xref)
+        if a is None or (abs(dx) < 0.01 and abs(dy) < 0.01):
+            return xref
+        self.checkpoint(f"Moveu {a.type[1]} na página {page_no + 1}")
+        t = a.type[1]
+        if t in ("Line", "Polygon", "PolyLine", "Ink"):
+            style, ends, info = _annot_style(a), a.line_ends, a.info
+            verts = _shift(a.vertices, dx, dy)
+            page.delete_annot(a)
+            if t == "Line":
+                n = page.add_line_annot(pymupdf.Point(verts[0]), pymupdf.Point(verts[1]))
+                if ends:
+                    n.set_line_ends(*ends)
+            elif t == "Polygon":
+                n = page.add_polygon_annot(verts)
+            elif t == "PolyLine":
+                n = page.add_polyline_annot(verts)
+            else:
+                n = page.add_ink_annot(verts)
+            return _apply_style(n, style, info.get("title", "")).xref
+        if t in ("Highlight", "Underline", "StrikeOut", "Squiggly"):
+            return xref  # marcações de texto ficam presas ao texto
+        # o PyMuPDF expande o retângulo em meia espessura de borda: compensamos
+        w = (a.border or {}).get("width", 0) / 2 if t in ("Square", "Circle") else 0
+        r = a.rect + (dx, dy, dx, dy)
+        a.set_rect(r + (w, w, -w, -w) if w and w > 0 else r)
+        a.update()
+        return xref
+
+    def resize_annot(self, page_no, xref, rect):
+        page = self.doc[page_no]
+        a = _find_annot(page, xref)
+        if a is None or a.type[1] not in ("Square", "Circle", "FreeText", "Stamp"):
+            return
+        self.checkpoint(f"Redimensionou {a.type[1]} na página {page_no + 1}")
+        w = (a.border or {}).get("width", 0) / 2 if a.type[1] in ("Square", "Circle") else 0
+        r = pymupdf.Rect(rect)
+        r.normalize()
+        a.set_rect(r + (w, w, -w, -w) if w and w > 0 else r)
+        a.update()
+
+    def restyle_annot(self, page_no, xref, **changes):
+        page = self.doc[page_no]
+        a = _find_annot(page, xref)
+        if a is None:
+            return
+        self.checkpoint(f"Alterou {a.type[1]} na página {page_no + 1}")
+        if a.type[1] in ("Highlight", "Underline", "StrikeOut", "Squiggly"):
+            if "stroke" in changes:
+                a.set_colors(stroke=changes["stroke"])
+            if "opacity" in changes:
+                a.set_opacity(changes["opacity"])
+            a.update()
+            return
+        style = _annot_style(a)
+        style.update(changes)
+        _apply_style(a, style, a.info.get("title", ""))
+
+
+
+class PdfDocument(_ShapeOps):
     def __init__(self, path: str | None = None, doc: pymupdf.Document | None = None):
         self.path = path
         self.doc = doc if doc is not None else (open_any(path) if path else pymupdf.open())
@@ -71,7 +264,7 @@ class PdfDocument:
 
     @property
     def title(self):
-        return Path(self.path).name if self.path else "Sem título.pdf"
+        return Path(self.path).name if self.path else (getattr(self, "display_name", "") or "Sem título.pdf")
 
     def is_native_pdf(self):
         return bool(self.path) and self.path.lower().endswith(".pdf")
@@ -446,3 +639,61 @@ def split_groups(mode: str, page_count: int, value: str = "") -> list[list[int]]
         h = (page_count + 1) // 2
         return [list(range(h)), list(range(h, page_count))]
     raise ValueError(mode)
+
+
+
+
+# ====================================================================== novo PDF do zero
+PAGE_SIZES = {
+    "A4 (210 × 297 mm)": (595.28, 841.89), "A3 (297 × 420 mm)": (841.89, 1190.55),
+    "A5 (148 × 210 mm)": (419.53, 595.28), "Carta (216 × 279 mm)": (612, 792),
+    "Ofício (216 × 330 mm)": (612.28, 935.43), "Legal (216 × 356 mm)": (612, 1008),
+    "Cartão 10 × 15 cm": (283.46, 425.2),
+}
+BACKGROUNDS = {"blank": "Em branco", "lined": "Pautado (linhas)", "grid": "Quadriculado",
+               "dots": "Pontilhado", "margin": "Pautado com margem"}
+
+
+def create_blank(width, height, pages=1, background="blank", title="") -> PdfDocument:
+    doc = pymupdf.open()
+    gray, step = (0.78, 0.82, 0.88), 20
+    for _ in range(max(1, pages)):
+        page = doc.new_page(width=width, height=height)
+        if background == "blank":
+            continue
+        shape = page.new_shape()
+        if background in ("lined", "margin"):
+            y = 72
+            while y < height - 36:
+                shape.draw_line((36, y), (width - 36, y))
+                y += 22
+            if background == "margin":
+                shape.finish(color=gray, width=0.5)
+                shape.draw_line((72, 36), (72, height - 36))
+                shape.finish(color=(0.9, 0.45, 0.45), width=0.8)
+        elif background == "grid":
+            x = 36
+            while x <= width - 36:
+                shape.draw_line((x, 36), (x, height - 36))
+                x += step
+            y = 36
+            while y <= height - 36:
+                shape.draw_line((36, y), (width - 36, y))
+                y += step
+        elif background == "dots":
+            for xx in range(36, int(width) - 35, step):
+                for yy in range(36, int(height) - 35, step):
+                    shape.draw_circle((xx, yy), 0.7)
+            shape.finish(color=gray, fill=gray, width=0)
+            shape.commit()
+            continue
+        shape.finish(color=gray, width=0.5)
+        shape.commit()
+    now = "D:" + dt.datetime.now().strftime("%Y%m%d%H%M%S")
+    doc.set_metadata({"title": title, "creator": APP_NAME, "producer": f"{APP_NAME} {__version__}",
+                      "creationDate": now, "modDate": now})
+    pd = PdfDocument(doc=doc)
+    pd.display_name = f"{title or 'Novo documento'}.pdf"
+    pd.modified = True
+    pd.edits.append(f"Novo documento ({pages} página(s), {BACKGROUNDS.get(background, background).lower()})")
+    return pd

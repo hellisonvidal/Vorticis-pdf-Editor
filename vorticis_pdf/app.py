@@ -25,7 +25,8 @@ def parse_args(argv):
     for a in argv:
         if a in ACTIONS:
             action = ACTIONS[a]
-        elif a in ("--register-shell", "--unregister-shell", "--selftest"):
+        elif a in ("--register-shell", "--unregister-shell", "--selftest", "--full-menu-on",
+                   "--full-menu-off"):
             special = a
         elif a and not a.startswith("--") and a != "%1":
             files.append(os.path.abspath(a))
@@ -186,7 +187,15 @@ def main(argv=None):
     if special:
         from . import shell_integration as shell
         try:
-            print(shell.register() if special == "--register-shell" else shell.unregister())
+            if special == "--register-shell":
+                print(shell.register())
+            elif special == "--unregister-shell":
+                print(shell.unregister())
+                print(shell.disable_full_menu(only_if_ours=True, restart=False))
+            elif special == "--full-menu-on":
+                print(shell.enable_full_menu(restart=True))
+            else:
+                print(shell.disable_full_menu(restart=True))
             return 0
         except Exception as e:
             print(e)

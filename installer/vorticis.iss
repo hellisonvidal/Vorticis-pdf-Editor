@@ -7,7 +7,7 @@
 
 #define AppName "Vorticis PDF Editor"
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 #define AppExe "VorticisPDF.exe"
 
@@ -50,6 +50,7 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDescription: "Atalhos:"
 Name: "contextmenu"; Description: "Adicionar opções ao menu do botão direito (Unir, Separar, Organizar, Converter)"; GroupDescription: "Integração com o Windows:"
+Name: "win11menu"; Description: "Windows 11: mostrar as opções direto no botão direito (sem precisar de ""Mostrar mais opções"")"; GroupDescription: "Integração com o Windows:"; Check: IsWindows11
 Name: "defaultpdf"; Description: "Usar o Vorticis como leitor de PDF padrão"; GroupDescription: "Integração com o Windows:"; Flags: unchecked
 
 [Files]
@@ -68,7 +69,17 @@ Root: HKA; Subkey: "Software\Classes\.pdf"; ValueType: string; ValueName: ""; Va
 
 [Run]
 Filename: "{app}\{#AppExe}"; Parameters: "--register-shell"; Flags: runhidden waituntilterminated; Tasks: contextmenu
+Filename: "{app}\{#AppExe}"; Parameters: "--full-menu-on"; Flags: runhidden waituntilterminated; Tasks: win11menu
 Filename: "{app}\{#AppExe}"; Description: "Abrir o {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{app}\{#AppExe}"; Parameters: "--unregister-shell"; Flags: runhidden; RunOnceId: "UnregShell"
+
+[Code]
+function IsWindows11: Boolean;
+var
+  V: TWindowsVersion;
+begin
+  GetWindowsVersionEx(V);
+  Result := (V.Major = 10) and (V.Build >= 22000);
+end;

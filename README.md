@@ -29,13 +29,36 @@ O build automático testa cada versão num Windows limpo antes de publicá-la. O
 * Painel de **miniaturas** com tamanho ajustável (controle deslizante ou `Ctrl` + roda) e **visualização ampliada** de qualquer página (barra de espaço ou duplo clique).
 * Busca de texto (`Ctrl+F`), seleção e cópia de texto.
 
+### Selecionar texto, sem escolher ferramenta
+* **Clique e arraste sobre o texto** com o botão esquerdo para selecioná-lo na ordem de leitura, como num editor de texto. A seleção pode abranger várias linhas.
+* **Clique duplo** seleciona a palavra, **clique triplo** seleciona a linha, `Shift`+clique estende a seleção e `Ctrl+A` seleciona todo o texto da página.
+* Arrastar numa **área sem texto** move a página, como a ferramenta mão.
+* Com o **botão direito sobre a seleção**: copiar, destacar, sublinhar, riscar, traduzir ou localizar no documento. Fora da seleção, o mesmo botão oferece: adicionar texto, nota, forma ou imagem no ponto clicado, girar a página e inserir página em branco.
+* Também funciona em documentos digitalizados depois do OCR.
+
+### Criar um PDF do zero
+**Arquivo › Novo PDF** (`Ctrl+N`), ou **Novo PDF** na tela inicial:
+* tamanhos A4, A3, A5, Carta, Ofício, Legal, cartão 10 × 15 cm ou personalizado (em mm), em retrato ou paisagem;
+* de 1 a 500 páginas;
+* fundo **em branco, pautado, pautado com margem, quadriculado ou pontilhado**.
+
+Depois é só clicar na página para escrever e usar formas, imagens, desenho livre e assinatura.
+
+### Formas
+Ferramenta **Formas** (`F`) na barra lateral:
+* **retângulo, elipse/círculo, linha, seta, seta dupla, triângulo, losango, estrela, visto (✓) e xis (✗)**;
+* a barra de opções define a cor do contorno, o preenchimento, a espessura, a opacidade e o tracejado;
+* segure `Shift` para obter quadrado ou círculo perfeito e linhas a 0°, 45° ou 90°;
+* **Desenho livre** (`D`): desenhe à mão com o mouse.
+
+Todas as formas continuam editáveis: clique para selecionar, arraste para mover, use a alça do canto para redimensionar e `Delete` para excluir. O botão direito sobre a forma muda cor, preenchimento, espessura, opacidade e tracejado. As formas são gravadas como anotações PDF padrão, então também podem ser editadas em outros leitores.
+
 ### Editar
 | Ferramenta | Atalho | O que faz |
 |---|---|---|
 | Editar texto | `E` | Passe o mouse sobre um texto para ver a fonte na barra de status e clique para editá-lo. **A fonte original é reconhecida e mantida** (veja abaixo) |
 | Adicionar texto | `T` | Insere texto em qualquer ponto, com qualquer fonte instalada |
 | Destacar | `M` | Marca-texto sobre as palavras |
-| Retângulo | `R` | Desenha um retângulo |
 | Apagar área | `W` | Remove definitivamente o conteúdo da área (redação) |
 | Nota | `N` | Comentário (post-it) |
 | Imagem | `I` | Insere uma imagem (assinatura, logotipo…) |
@@ -85,7 +108,8 @@ Ative pelo instalador ou em **Ferramentas › Adicionar ao menu do botão direit
 * **Office e imagens**: Converter para PDF · Unir como um único PDF · Abrir
 
 Se vários arquivos estiverem selecionados, o Vorticis junta todos numa única operação. Também são criados atalhos em **Enviar para** (*Vorticis - Unir em PDF* e *Vorticis - Organizar páginas*).
-> No Windows 11, as opções ficam em **"Mostrar mais opções"** (ou `Shift+F10`).
+> **Windows 11:** por padrão, o Windows esconde as opções de programas em "Mostrar mais opções". O instalador já oferece, marcada, a opção **"Windows 11: mostrar as opções direto no botão direito"**. Ela também pode ser ligada ou desligada em **Ferramentas › Windows 11: mostrar as opções direto no botão direito**.
+> Essa opção ativa o menu completo do Windows (o mesmo de "Mostrar mais opções") diretamente, para todos os programas. Vale só para o seu usuário, não precisa de administrador e é desfeita ao desinstalar. Para aplicar, o Explorer é reiniciado uma vez.
 
 ### Informações de salvamento
 * Depois de salvar, uma janela mostra o arquivo, a data e a hora, o número de páginas, o tamanho antes e depois, a proteção por senha e a **lista de alterações feitas**.

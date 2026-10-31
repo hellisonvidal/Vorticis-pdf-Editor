@@ -8,7 +8,7 @@ import pymupdf
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSlider,
     QSpinBox, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         actions.setSpacing(8)
         for ic, text, sub, fn in (
             ("open", "Abrir PDF", "ou arraste um arquivo para esta janela", self.open_dialog),
+            ("new_file", "Novo PDF", "crie um documento do zero", self.new_pdf),
             ("merge", "Unir PDFs", "junte vários arquivos em um só", lambda: self.ctrl.merge([])),
             ("split", "Separar PDF", "por páginas, intervalos ou a cada N", lambda: self.ctrl.split([])),
             ("organize", "Organizar páginas", "reordene, gire e exclua visualmente", self._organize_from_welcome),
@@ -274,7 +275,9 @@ class MainWindow(QMainWindow):
         self.a_history = A("Histórico de salvamentos...", lambda: HistoryDialog(self).exec(), None, "history")
         self.a_close = A("Fechar", self.close, QKeySequence.Close)
         self.a_quit = A("Sair", self.ctrl.quit, QKeySequence.Quit)
-        self.a_new_win = A("Nova janela", lambda: self.ctrl.new_window(), "Ctrl+N")
+        self.a_new_win = A("Nova janela", lambda: self.ctrl.new_window(), "Ctrl+Shift+N")
+        self.a_new_pdf = A("Novo PDF...", self.new_pdf, "Ctrl+N", "new_file",
+                           "Criar um PDF do zero (em branco, pautado, quadriculado...)")
 
         self.a_undo = A("Desfazer", self.undo, QKeySequence.Undo, "undo")
         self.a_redo = A("Refazer", self.redo, QKeySequence.Redo, "redo")
@@ -320,6 +323,10 @@ class MainWindow(QMainWindow):
                           "Confere signatário, data e se o PDF foi alterado depois de assinado")
         self.a_shell_on = A("Adicionar ao menu do botão direito do Windows", self.shell_register)
         self.a_shell_off = A("Remover do menu do botão direito", self.shell_unregister)
+        self.a_full_menu = A("Windows 11: mostrar as opções direto no botão direito", self.toggle_full_menu,
+                             None, None, "Dispensa o “Mostrar mais opções” do Windows 11", checkable=True)
+        self.a_full_menu.setChecked(shell.full_menu_enabled())
+        self.a_full_menu.setVisible(shell.is_windows11())
         self.a_log = A("Abrir registro de erros", lambda: open_folder(str(log_path())))
         self.a_about = A("Sobre o Vorticis PDF Editor", lambda: about(self), "F1", "info")
         self.a_theme = A("Alternar tema claro/escuro", self.toggle_theme, "Ctrl+Shift+T", "moon")
@@ -337,13 +344,17 @@ class MainWindow(QMainWindow):
         self.tool_group = QActionGroup(self)
         self.tool_actions = {}
         for key, text, ic, sc, tip in (
-            (V.SELECT, "Selecionar", "select", "S", "Selecionar e copiar texto (arraste)"),
+            (V.SELECT, "Selecionar e mover", "select", "S",
+             "Padrão: arraste sobre o texto para selecionar (duplo clique = palavra, triplo = linha); "
+             "arraste fora do texto para mover a página; clique numa forma para movê-la"),
             (V.PAN, "Mão", "pan", "H", "Arrastar a página"),
             (V.EDIT_TEXT, "Editar texto", "edit_text", "E",
              "Passe o mouse para ver a fonte; clique para editar mantendo a fonte original"),
             (V.ADD_TEXT, "Adicionar texto", "add_text", "T", "Clique onde deseja inserir texto"),
             (V.HIGHLIGHT, "Destacar", "highlight", "M", "Arraste sobre o texto para destacar"),
-            (V.RECT, "Retângulo", "rect", "R", "Desenhar um retângulo"),
+            (V.SHAPE, "Formas", "shapes", "F",
+             "Retângulo, elipse, linha, seta, triângulo, estrela, visto, xis... (Shift = proporção)"),
+            (V.INK, "Desenho livre", "pen", "D", "Desenhe à mão livre com o mouse"),
             (V.WHITEOUT, "Apagar área", "whiteout", "W", "Cobre e remove o conteúdo da área"),
             (V.NOTE, "Nota", "note", "N", "Adicionar comentário"),
             (V.IMAGE, "Imagem", "image", "I", "Arraste a área e escolha a imagem"),
@@ -360,7 +371,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         m = mb.addMenu("&Arquivo")
-        m.addActions([self.a_open, self.a_new_win])
+        m.addActions([self.a_new_pdf, self.a_open, self.a_new_win])
         self.recent_menu = m.addMenu("Abrir recentes")
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         m.addSeparator()
@@ -396,7 +407,7 @@ class MainWindow(QMainWindow):
         m.addAction(self.tool_actions[V.SIGN])
         m.addActions([self.a_sign_inv, self.a_verify])
         m.addSeparator()
-        m.addActions([self.a_shell_on, self.a_shell_off])
+        m.addActions([self.a_shell_on, self.a_shell_off, self.a_full_menu])
         m = mb.addMenu("Aj&uda")
         m.addActions([self.a_about, self.a_log])
 
@@ -409,7 +420,7 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
         tb.setContextMenuPolicy(Qt.PreventContextMenu)
         self.addToolBar(Qt.TopToolBarArea, tb)
-        tb.addActions([self.a_open, self.a_save, self.a_print])
+        tb.addActions([self.a_new_pdf, self.a_open, self.a_save, self.a_print])
         tb.addWidget(_sep())
         tb.addActions([self.a_undo, self.a_redo])
         tb.addWidget(_sep())
@@ -460,6 +471,8 @@ class MainWindow(QMainWindow):
         tb.addAction(self.a_theme)
         tb.addAction(self.a_about)
 
+        self._build_shape_bar()
+
         rail = QToolBar("Ferramentas")
         rail.setObjectName("ToolRail")
         rail.setMovable(False)
@@ -471,9 +484,64 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.LeftToolBarArea, rail)
         for key, a in self.tool_actions.items():
             rail.addAction(a)
-            if key in (V.PAN, V.ADD_TEXT, V.NOTE, V.CROP):
+            if key in (V.PAN, V.ADD_TEXT, V.INK, V.NOTE, V.CROP):
                 rail.addWidget(self._rail_sep())
         self.rail = rail
+
+    def _build_shape_bar(self):
+        from .dialogs import ColorButton
+        from .document import SHAPES
+        bar = QToolBar("Opções da forma")
+        bar.setObjectName("HeaderBar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.addToolBarBreak(Qt.TopToolBarArea)
+        self.addToolBar(Qt.TopToolBarArea, bar)
+        st = self.view.shape_style
+        self.shape_kind = QComboBox()
+        for k, label in SHAPES.items():
+            self.shape_kind.addItem(label, k)
+        self.shape_kind.currentIndexChanged.connect(
+            lambda _i: setattr(self.view, "shape_kind", self.shape_kind.currentData()))
+        self.shape_kind_lbl = QLabel("  Forma: ")
+        self.shape_kind_act = [bar.addWidget(self.shape_kind_lbl), bar.addWidget(self.shape_kind)]
+        bar.addWidget(QLabel("   Contorno: "))
+        self.stroke_btn = ColorButton(st["stroke"])
+        self.stroke_btn.setFixedWidth(92)
+        self.stroke_btn.changed = lambda: st.__setitem__("stroke", self.stroke_btn.rgb)
+        bar.addWidget(self.stroke_btn)
+        self.fill_chk = QCheckBox("  Preenchimento: ")
+        bar.addWidget(self.fill_chk)
+        self.fill_btn = ColorButton((0.99, 0.91, 0.91))
+        self.fill_btn.setFixedWidth(92)
+        self.fill_btn.setEnabled(False)
+
+        def fill_changed(*_a):
+            self.fill_btn.setEnabled(self.fill_chk.isChecked())
+            st["fill"] = self.fill_btn.rgb if self.fill_chk.isChecked() else None
+        self.fill_chk.toggled.connect(fill_changed)
+        self.fill_btn.changed = fill_changed
+        bar.addWidget(self.fill_btn)
+        bar.addWidget(QLabel("   Espessura: "))
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self.width_spin = QDoubleSpinBox(minimum=0.5, maximum=20, value=st["width"], singleStep=0.5, suffix=" pt")
+        self.width_spin.setFixedWidth(96)
+        self.width_spin.valueChanged.connect(lambda v: st.__setitem__("width", v))
+        bar.addWidget(self.width_spin)
+        bar.addWidget(QLabel("   Opacidade: "))
+        self.op_spin = QSpinBox(minimum=10, maximum=100, value=100, singleStep=10, suffix=" %")
+        self.op_spin.setFixedWidth(86)
+        self.op_spin.valueChanged.connect(lambda v: st.__setitem__("opacity", v / 100))
+        bar.addWidget(self.op_spin)
+        self.dash_chk = QCheckBox("  Tracejado")
+        self.dash_chk.toggled.connect(lambda on: st.__setitem__("dashed", on))
+        bar.addWidget(self.dash_chk)
+        hint = QLabel("    Shift = proporção perfeita • clique na forma para mover • Delete para excluir")
+        hint.setObjectName("Muted")
+        bar.addWidget(hint)
+        bar.hide()
+        self.shape_bar = bar
 
     @staticmethod
     def _rail_sep():
@@ -511,6 +579,14 @@ class MainWindow(QMainWindow):
         self.view.noteRequested.connect(self.add_note)
         self.view.areaSelected.connect(self.area_tool)
         self.view.spanHovered.connect(self._show_hover_font)
+        self.view.shapeDrawn.connect(self.on_shape)
+        self.view.inkDrawn.connect(self.on_ink)
+        self.view.annotMoved.connect(self.on_annot_moved)
+        self.view.annotResized.connect(self.on_annot_resized)
+        self.view.annotDeleteRequested.connect(self.on_annot_delete)
+        self.view.annotMenuRequested.connect(self.annot_menu)
+        self.view.pageMenuRequested.connect(self.page_menu)
+        self.view.markupRequested.connect(self.markup_selection)
         self.thumbs.pageActivated.connect(
             lambda i: self.view.set_current_page(i) if not self.a_organize.isChecked() else None)
         self.thumbs.pagesMoved.connect(self.move_pages)
@@ -798,6 +874,9 @@ class MainWindow(QMainWindow):
     def set_tool(self, key):
         self.tool_actions[key].setChecked(True)
         self.view.set_tool(key)
+        self.shape_bar.setVisible(key in (V.SHAPE, V.INK))
+        for a in self.shape_kind_act:
+            a.setVisible(key == V.SHAPE)
         if self.a_organize.isChecked() and key != V.SELECT:
             self.a_organize.setChecked(False)
             self.toggle_organize()
@@ -1012,6 +1091,139 @@ class MainWindow(QMainWindow):
             dlg.out_dir.setText(str(Path(self.pdoc.path).parent))
         dlg.exec()
 
+    # ================================================================== novo PDF
+    def new_pdf(self):
+        from .document import create_blank
+        from .features import NewPdfDialog
+        dlg = NewPdfDialog(self)
+        if not dlg.exec():
+            return
+        v = dlg.values()
+        pd = create_blank(v["width"], v["height"], v["pages"], v["background"], v["title"])
+        w = self if self.is_empty() else self.ctrl.new_window()
+        w.set_document(pd)
+        w._converted_name = str(Path(w.settings.value("last_dir", str(Path.home()))) /
+                                f"{v['title'] or 'Novo documento'}.pdf")
+        w.set_tool(V.ADD_TEXT)
+        w.statusBar().showMessage("Documento criado. Clique na página para escrever, ou use Formas, "
+                                  "Imagem e Desenho livre na barra lateral.", 10000)
+
+    # ================================================================== formas e marcações
+    def on_shape(self, page_no, kind, p1, p2):
+        xref = self.pdoc.add_shape(page_no, kind, p1, p2, dict(self.view.shape_style))
+        self.refresh(pages=[page_no])
+        self._select_xref(page_no, xref)
+
+    def on_ink(self, page_no, points):
+        xref = self.pdoc.add_ink(page_no, points, dict(self.view.shape_style))
+        self.refresh(pages=[page_no])
+        self._select_xref(page_no, xref)
+
+    def _select_xref(self, page_no, xref):
+        page = self.pdoc.doc[page_no]  # mantém a página viva enquanto lê as anotações
+        for a in page.annots():
+            if a.xref == xref:
+                self.view.select_annot(page_no, (xref, a.type[1], pymupdf.Rect(a.rect)))
+                break
+
+    def on_annot_moved(self, page_no, xref, dx, dy):
+        new = self.pdoc.move_annot(page_no, xref, dx, dy)
+        self.refresh(pages=[page_no])
+        self._select_xref(page_no, new)
+
+    def on_annot_resized(self, page_no, xref, rect):
+        self.pdoc.resize_annot(page_no, xref, rect)
+        self.refresh(pages=[page_no])
+        self._select_xref(page_no, xref)
+
+    def on_annot_delete(self, page_no, xref):
+        self.pdoc.delete_annot(page_no, xref)
+        self.refresh(pages=[page_no])
+
+    def annot_menu(self, page_no, xref, gpos):
+        from PySide6.QtWidgets import QColorDialog, QMenu
+        m = QMenu(self)
+        m.addAction(icon("trash"), "Excluir   (Delete)", lambda: self.on_annot_delete(page_no, xref))
+        m.addSeparator()
+
+        def pick(key, title):
+            c = QColorDialog.getColor(parent=self, title=title)
+            if c.isValid():
+                self.pdoc.restyle_annot(page_no, xref, **{key: (c.redF(), c.greenF(), c.blueF())})
+                self.refresh(pages=[page_no])
+                self._select_xref(page_no, xref)
+        m.addAction("Cor do contorno...", lambda: pick("stroke", "Cor do contorno"))
+        m.addAction("Cor de preenchimento...", lambda: pick("fill", "Cor de preenchimento"))
+
+        def restyle(**kw):
+            self.pdoc.restyle_annot(page_no, xref, **kw)
+            self.refresh(pages=[page_no])
+            self._select_xref(page_no, xref)
+        m.addAction("Sem preenchimento", lambda: restyle(fill=None))
+        wm = m.addMenu("Espessura")
+        for w in (0.5, 1, 2, 3, 4, 6, 8):
+            wm.addAction(f"{w:g} pt", lambda w=w: restyle(width=float(w)))
+        om = m.addMenu("Opacidade")
+        for o in (100, 75, 50, 25):
+            om.addAction(f"{o}%", lambda o=o: restyle(opacity=o / 100))
+        m.addAction("Contorno tracejado / contínuo", lambda: restyle(dashed=not self._annot_dashed(page_no, xref)))
+        m.exec(gpos)
+
+    def _annot_dashed(self, page_no, xref):
+        page = self.pdoc.doc[page_no]
+        for a in page.annots():
+            if a.xref == xref:
+                return bool((a.border or {}).get("dashes"))
+        return False
+
+    def markup_selection(self, kind):
+        v = self.view
+        if not v.text_sel or not v.selection_rects:
+            return
+        page_no = v.text_sel[0]
+        rects = [r for pg, r in v.selection_rects if pg == page_no]
+        self.pdoc.markup_text(page_no, rects, kind)
+        v.clear_selection()
+        self.refresh(pages=[page_no])
+
+    def translate_selection(self):
+        text = self.view.selected_text
+        if not text:
+            return
+        dlg = TextResultDialog(self, "Traduzir seleção", text, Path(self.pdoc.title).stem)
+        dlg._translate()
+        dlg.exec()
+
+    def page_menu(self, page_no, pt, gpos):
+        from PySide6.QtWidgets import QMenu
+        from .document import SHAPES
+        v = self.view
+        m = QMenu(self)
+        if v.selected_text:
+            m.addAction(icon("copy"), "Copiar   (Ctrl+C)", self.copy)
+            m.addAction(icon("highlight"), "Destacar", lambda: self.markup_selection("highlight"))
+            m.addAction("Sublinhar", lambda: self.markup_selection("underline"))
+            m.addAction("Riscar", lambda: self.markup_selection("strikeout"))
+            m.addAction(icon("translate"), "Traduzir seleção...", self.translate_selection)
+            preview = v.selected_text.replace("\n", " ")[:30]
+            m.addAction(icon("search"), f"Localizar “{preview}”",
+                        lambda: (self.search_box.setText(v.selected_text.split("\n")[0]), self.search_next()))
+            m.addSeparator()
+        m.addAction("Selecionar todo o texto da página   (Ctrl+A)", lambda: v.select_all_page(page_no))
+        m.addSeparator()
+        m.addAction(icon("add_text"), "Adicionar texto aqui", lambda: self.add_text(page_no, pt))
+        m.addAction(icon("note"), "Adicionar nota aqui", lambda: self.add_note(page_no, pt))
+        sm = m.addMenu(icon("shapes"), "Inserir forma aqui")
+        for k, label in SHAPES.items():
+            sm.addAction(label, lambda k=k: self.on_shape(
+                page_no, k, pt, (pt[0] + 120, pt[1] + (0 if k in ("line", "arrow", "double_arrow") else 80))))
+        m.addAction(icon("image"), "Inserir imagem aqui...", lambda: self.area_tool(
+            V.IMAGE, page_no, (pt[0], pt[1], pt[0] + 200, pt[1] + 150)))
+        m.addSeparator()
+        m.addAction(icon("rotate_right"), "Girar esta página", lambda: self.thumb_action("rot_r", [page_no]))
+        m.addAction(icon("pages"), "Inserir página em branco depois", lambda: self.thumb_action("blank", [page_no]))
+        m.exec(gpos)
+
     # ================================================================== OCR e tradução
     def _scope_args(self):
         return self.pdoc.page_count, self.view.current, self.thumbs.selected_rows()
@@ -1156,6 +1368,29 @@ class MainWindow(QMainWindow):
         try:
             QMessageBox.information(self, APP_NAME, shell.register())
         except Exception as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+        if shell.is_windows11() and not shell.full_menu_enabled():
+            self.a_full_menu.setChecked(True)
+            self.toggle_full_menu()
+
+    def toggle_full_menu(self):
+        on = self.a_full_menu.isChecked()
+        text = ("Mostrar as opções do Vorticis direto no menu do botão direito do Windows 11, sem precisar "
+                "de “Mostrar mais opções”?\n\nO Windows passará a exibir o menu completo (o mesmo do "
+                "“Mostrar mais opções”) para todos os programas. Vale só para o seu usuário, não precisa de "
+                "administrador e pode ser desfeito aqui a qualquer momento.\n\nO Explorer será reiniciado "
+                "(as janelas de pastas abertas serão fechadas)." if on else
+                "Voltar ao menu compacto do Windows 11? As opções do Vorticis voltarão a ficar em "
+                "“Mostrar mais opções”.\n\nO Explorer será reiniciado.")
+        if QMessageBox.question(self, APP_NAME, text) != QMessageBox.Yes:
+            self.a_full_menu.setChecked(not on)
+            return
+        try:
+            msg = shell.enable_full_menu() if on else shell.disable_full_menu()
+            QMessageBox.information(self, APP_NAME, msg)
+        except Exception as e:
+            self.a_full_menu.setChecked(not on)
             QMessageBox.warning(self, APP_NAME, str(e))
 
     def shell_unregister(self):

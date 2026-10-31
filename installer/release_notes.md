@@ -11,6 +11,12 @@ Requisitos: Windows 10 ou 11 (64 bits).
 > que ainda não tem assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
 > O código é aberto e os arquivos podem ser conferidos pelo `SHA256SUMS.txt`.
 
+## Novidades da 1.3.0
+- **Windows 11:** as opções do Vorticis aparecem direto no menu do botão direito, sem precisar de "Mostrar mais opções". A opção vem marcada no instalador, pode ser ligada ou desligada pelo programa e é desfeita ao desinstalar.
+- **Seleção de texto com o mouse, sem escolher ferramenta:** arraste sobre o texto. Clique duplo seleciona a palavra, clique triplo a linha. O botão direito copia, destaca, sublinha, risca ou traduz a seleção.
+- **Novo PDF do zero:** escolha o tamanho (A4, Carta, Ofício...), a orientação, o número de páginas e o fundo (em branco, pautado, quadriculado ou pontilhado).
+- **Formas:** retângulo, elipse, linha, seta, seta dupla, triângulo, losango, estrela, visto e xis, além de desenho livre. Têm cores, preenchimento, espessura, opacidade e tracejado, e continuam editáveis: dá para mover, redimensionar e excluir.
+
 ## Novidades da 1.2.0
 - **OCR completo:** reconhece o texto de documentos digitalizados, sem internet. Pode tornar o PDF pesquisável ou extrair o texto. Português, inglês e espanhol já vêm incluídos, e há mais 20 idiomas para baixar.
 - **Tradução:** gera um PDF traduzido mantendo o layout, ou só o texto, em 30 idiomas.

@@ -140,6 +140,26 @@ def run() -> int:
         ver = sig.verify_pdf(signed)
         assert ver and ver[0]["integra"] and ver[0]["valida"] and ver[0]["cpf"] == "123.456.789-01", ver
         log("assinatura digital e verificação OK")
+        # novo PDF do zero + formas + seleção de texto na ordem de leitura
+        from .document import SHAPES, create_blank
+        from .viewer import PdfView
+        nd = create_blank(595, 842, pages=2, background="grid", title="Novo")
+        nd.add_text(0, (72, 100), "Texto do novo documento", font, 14, (0, 0, 0))
+        xrefs = [nd.add_shape(0, k, (60 + i * 50, 200), (100 + i * 50, 240)) for i, k in enumerate(SHAPES)]
+        xrefs[0] = nd.move_annot(0, xrefs[0], 10, 10)
+        nd.delete_annot(0, xrefs[-1])
+        nd.add_ink(1, [(50, 50), (80, 90), (120, 60)])
+        page_a = nd.doc[0]
+        n_annots = len(list(page_a.annots()))
+        del page_a
+        assert n_annots == len(SHAPES) - 1, n_annots
+        nd.save(str(tmp / "novo.pdf"))
+        view = PdfView()
+        view.set_document(nd.doc)
+        idx = view.char_at(0, pymupdf.Point(73, 96), strict=True)
+        view.select_range(0, idx, idx + 5)
+        assert view.selected_text == "Texto", view.selected_text
+        log(f"novo PDF, {len(SHAPES)} formas e seleção de texto OK")
         log("RESULTADO: SUCESSO")
         return 0
     except Exception:
