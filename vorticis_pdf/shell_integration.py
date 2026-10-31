@@ -250,6 +250,13 @@ def restart_explorer():
     """Reinicia o Windows Explorer para aplicar a mudança do menu (as janelas de pastas
     abertas são fechadas e a barra de tarefas pisca por um instante)."""
     import subprocess
-    flags = 0x08000000
-    subprocess.run(["taskkill", "/f", "/im", "explorer.exe"], capture_output=True, creationflags=flags)
-    subprocess.Popen(["explorer.exe"], creationflags=flags)
+    no_window = 0x08000000
+    subprocess.run(["taskkill", "/f", "/im", "explorer.exe"], capture_output=True, creationflags=no_window)
+    # o novo Explorer não pode ficar "preso" a este processo (nem ao instalador que o chamou)
+    detached = 0x00000008 | 0x00000200 | 0x01000000  # DETACHED | NEW_PROCESS_GROUP | BREAKAWAY_FROM_JOB
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    try:
+        subprocess.Popen([os.path.join(windir, "explorer.exe")], creationflags=detached, close_fds=True)
+    except OSError:
+        subprocess.Popen([os.path.join(windir, "explorer.exe")], creationflags=0x00000008 | 0x00000200,
+                         close_fds=True)

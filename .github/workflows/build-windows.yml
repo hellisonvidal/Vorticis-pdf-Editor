@@ -68,10 +68,10 @@ jobs:
           if (-not (Test-Path "HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\VorticisPDF")) { throw "Menu de contexto não registrado" }
           Write-Host "Instalação, autoteste e menu de contexto OK"
           # Windows 11: opções direto no botão direito (sem "Mostrar mais opções")
-          Start-Process -FilePath $exe -ArgumentList "--full-menu-on" -Wait
+          Start-Process -FilePath $exe -ArgumentList "--full-menu-on","--no-restart" -Wait
           $k = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
           if (-not (Test-Path $k)) { throw "Menu completo do Windows 11 não foi ativado" }
-          Start-Process -FilePath $exe -ArgumentList "--full-menu-off" -Wait
+          Start-Process -FilePath $exe -ArgumentList "--full-menu-off","--no-restart" -Wait
           if (Test-Path $k) { throw "Menu completo do Windows 11 não foi desativado" }
           Write-Host "Menu completo do Windows 11: ativar/desativar OK"
           $un = "$env:LOCALAPPDATA\Programs\Vorticis PDF Editor\unins000.exe"

@@ -193,9 +193,9 @@ def main(argv=None):
                 print(shell.unregister())
                 print(shell.disable_full_menu(only_if_ours=True, restart=False))
             elif special == "--full-menu-on":
-                print(shell.enable_full_menu(restart=True))
+                print(shell.enable_full_menu(restart="--no-restart" not in argv))
             else:
-                print(shell.disable_full_menu(restart=True))
+                print(shell.disable_full_menu(restart="--no-restart" not in argv))
             return 0
         except Exception as e:
             print(e)
