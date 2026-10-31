@@ -26,6 +26,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Baixar modelos de OCR (português, inglês, espanhol)
+        run: python tools/fetch_tessdata.py
+
       - name: Gerar executável (PyInstaller)
         run: pyinstaller --noconfirm VorticisPDF.spec
 

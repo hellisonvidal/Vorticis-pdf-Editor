@@ -6,3 +6,5 @@ dist/
 .venv/
 venv/
 installer/Output/
+vorticis_pdf/resources/tessdata/*.traineddata
+vorticis_pdf/resources/tessdata/*.part

@@ -27,7 +27,7 @@ def parse_args(argv):
             action = ACTIONS[a]
         elif a in ("--register-shell", "--unregister-shell", "--selftest"):
             special = a
-        elif not a.startswith("--"):
+        elif a and not a.startswith("--") and a != "%1":
             files.append(os.path.abspath(a))
     return action, files, special
 
@@ -75,7 +75,7 @@ class Controller:
         return self.new_window()
 
     def open_files(self, files, prefer=None, organize=False):
-        for f in files:
+        for f in [f for f in files if f]:
             w = self._target_window(prefer)
             prefer = None
             w.load(f, organize=organize)
@@ -112,6 +112,9 @@ class Controller:
         self._dialog(ConvertDialog(None, files, to_pdf))
 
     def organize(self, files):
+        files = [f for f in files if f and os.path.isfile(f)]
+        if not files:
+            return
         if len(files) <= 1:
             self.open_files(files, organize=True)
             return
@@ -210,7 +213,8 @@ def main(argv=None):
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Vorticis")
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
-    from . import theme
+    from . import i18n, theme
+    i18n.install(app)
     theme.apply(app)
 
     # já existe uma instância? repassa os arquivos e sai (Explorer abre 1 processo por arquivo)

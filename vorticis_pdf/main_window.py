@@ -22,9 +22,14 @@ from .dialogs import (
     ALL_SUPPORTED, PDF_FILTER, ConvertDialog, HistoryDialog, PagePreviewDialog,
     PropertiesDialog, SaveInfoDialog, SplitDialog, TextDialog, about, open_folder,
 )
+from . import ocr
+from . import signature as sig
+from . import translate as tr
 from .document import PdfDocument, split_document
+from .features import OcrDialog, SignDialog, TextResultDialog, TranslateDialog, VerifyDialog
 from .fonts import catalog, strip_subset
-from .icons import icon
+from .icons import icon, on_retheme
+from .theme import c, is_dark
 from .printing import print_document
 from .tasks import run_task
 from .thumbnails import ThumbList
@@ -73,6 +78,8 @@ class MainWindow(QMainWindow):
         self._build_toolbars()
         self._build_status()
         self._connect()
+        self._retheme()
+        on_retheme(self._retheme)
         self.set_document(pdoc)
         geo = self.settings.value("geometry")
         if geo is not None:
@@ -92,9 +99,8 @@ class MainWindow(QMainWindow):
         self.thumb_title = QLabel("Páginas")
         h.addWidget(self.thumb_title)
         h.addStretch()
-        zl = QLabel()
-        zl.setPixmap(icon("zoom_in", "#aeb4bd").pixmap(16, 16))
-        h.addWidget(zl)
+        self._thumb_zoom_lbl = QLabel()
+        h.addWidget(self._thumb_zoom_lbl)
         self.thumb_slider = QSlider(Qt.Horizontal, minimum=70, maximum=420, value=self.thumbs.thumb)
         self.thumb_slider.setFixedWidth(100)
         self.thumb_slider.setToolTip("Tamanho das miniaturas (Ctrl + roda do mouse)")
@@ -144,7 +150,8 @@ class MainWindow(QMainWindow):
             ("organize", "Organizar páginas", "reordene, gire e exclua visualmente", self._organize_from_welcome),
             ("convert", "Converter arquivos", "Word, Excel, PowerPoint, imagens ↔ PDF", lambda: self.ctrl.convert([])),
         ):
-            b = QPushButton(icon(ic, "#d6232d"), f"  {text}\n  {sub}")
+            b = QPushButton(f"  {text}\n  {sub}")
+            b.setProperty("vicon", ic)
             b.setObjectName("BigAction")
             b.setIconSize(QSize(26, 26))
             b.setCursor(Qt.PointingHandCursor)
@@ -160,8 +167,8 @@ class MainWindow(QMainWindow):
         self.recent_list = QListWidget()
         self.recent_list.setObjectName("RecentList")
         self.recent_list.setMinimumWidth(360)
-        self.recent_list.itemActivated.connect(lambda it: self.ctrl.open_files([it.data(Qt.UserRole)], self))
-        self.recent_list.itemClicked.connect(lambda it: self.ctrl.open_files([it.data(Qt.UserRole)], self))
+        self.recent_list.itemActivated.connect(self._open_recent_item)
+        self.recent_list.itemClicked.connect(self._open_recent_item)
         rl.addWidget(self.recent_list, 1)
         badge = QLabel("🤖 Feito integralmente com IA  •  💚 Sempre gratuito")
         badge.setObjectName("Badge")
@@ -174,6 +181,41 @@ class MainWindow(QMainWindow):
         outer.addStretch()
         return page
 
+    def _retheme(self):
+        """Reaplica ícones e cores ao trocar entre tema claro e escuro."""
+        for a in self.findChildren(QAction):
+            name = a.property("vicon")
+            if name:
+                a.setIcon(icon(name))
+        for b in self.findChildren(QPushButton):
+            name = b.property("vicon")
+            if name:
+                b.setIcon(icon(name, c("accent")))
+                b.setIconSize(QSize(26, 26))
+        if hasattr(self, "merge_btn"):
+            self.merge_btn.setIcon(icon("merge", "#ffffff"))
+        if hasattr(self, "_search_icon"):
+            self._search_icon.setIcon(icon("search", c("muted")))
+        self._thumb_zoom_lbl.setPixmap(icon("zoom_in", "#aeb4bd").pixmap(16, 16))
+        if hasattr(self, "a_theme"):
+            self.a_theme.setIcon(icon("sun" if is_dark() else "moon"))
+        if hasattr(self, "st_saved") and self.st_saved.text():
+            self._set_saved_badge(self.st_saved.text(), self.st_saved.objectName() == "DirtyBadge")
+        if self.pdoc is None and hasattr(self, "recent_list"):
+            self._fill_recent_list()
+        self.view.apply_theme()
+        self.thumbs.apply_theme()
+
+    def set_theme(self, mode):
+        from PySide6.QtWidgets import QApplication
+        from . import theme
+        theme.apply(QApplication.instance(), mode)
+        for key, a in self.theme_actions.items():
+            a.setChecked(key == mode)
+
+    def toggle_theme(self):
+        self.set_theme("light" if is_dark() else "dark")
+
     def _fill_recent_list(self):
         self.recent_list.clear()
         rec = self.settings.value("recent", []) or []
@@ -184,7 +226,7 @@ class MainWindow(QMainWindow):
                 parent = str(Path(p).parent)
                 if len(parent) > 48:
                     parent = "…" + parent[-47:]
-                it = QListWidgetItem(icon("pages", "#6b7280"), f"{Path(p).name}\n{parent}")
+                it = QListWidgetItem(icon("pages", c("muted")), f"{Path(p).name}\n{parent}")
                 it.setData(Qt.UserRole, p)
                 it.setToolTip(p)
                 self.recent_list.addItem(it)
@@ -192,6 +234,11 @@ class MainWindow(QMainWindow):
             it = QListWidgetItem("Nenhum arquivo aberto recentemente")
             it.setFlags(Qt.NoItemFlags)
             self.recent_list.addItem(it)
+
+    def _open_recent_item(self, item):
+        path = item.data(Qt.UserRole) if item is not None else None
+        if path:  # o item "Nenhum arquivo..." não tem caminho
+            self.ctrl.open_files([path], self)
 
     def _organize_from_welcome(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Escolha os arquivos para organizar", "",
@@ -205,6 +252,7 @@ class MainWindow(QMainWindow):
             a.setShortcut(QKeySequence(shortcut))
         if ic:
             a.setIcon(icon(ic))
+            a.setProperty("vicon", ic)
         sc = a.shortcut().toString(QKeySequence.NativeText)
         a.setToolTip(f"<b>{text.rstrip('.')}</b>" + (f"  <span style='color:#aab'>({sc})</span>" if sc else "")
                      + (f"<br>{tip}" if tip else ""))
@@ -262,10 +310,28 @@ class MainWindow(QMainWindow):
         self.a_convert = A("Converter arquivos...", lambda: self.ctrl.convert([]), "Ctrl+Shift+C", "convert",
                            "Converter Word, Excel, PowerPoint, imagens ↔ PDF")
         self.a_export = A("Exportar este PDF para...", self.export_current, None, "convert")
+        self.a_ocr = A("Reconhecer texto (OCR)...", self.ocr_dialog, "Ctrl+Shift+O", "ocr",
+                       "Reconhece o texto de páginas digitalizadas: torna o PDF pesquisável ou extrai o texto")
+        self.a_translate = A("Traduzir documento...", self.translate_dialog, "Ctrl+Shift+L", "translate",
+                             "Traduz o PDF mantendo o layout, ou só o texto (requer internet)")
+        self.a_sign_inv = A("Assinar digitalmente (invisível)...", lambda: self.sign_document(None, None),
+                            None, "signature", "Assina com certificado A1/A3 sem carimbo visível")
+        self.a_verify = A("Verificar assinaturas digitais...", self.verify_signatures, None, "shield",
+                          "Confere signatário, data e se o PDF foi alterado depois de assinado")
         self.a_shell_on = A("Adicionar ao menu do botão direito do Windows", self.shell_register)
         self.a_shell_off = A("Remover do menu do botão direito", self.shell_unregister)
         self.a_log = A("Abrir registro de erros", lambda: open_folder(str(log_path())))
         self.a_about = A("Sobre o Vorticis PDF Editor", lambda: about(self), "F1", "info")
+        self.a_theme = A("Alternar tema claro/escuro", self.toggle_theme, "Ctrl+Shift+T", "moon")
+        self.theme_group = QActionGroup(self)
+        self.theme_actions = {}
+        current_mode = self.settings.value("theme", "system")
+        for key, label in (("system", "Seguir o Windows"), ("light", "Claro"), ("dark", "Escuro")):
+            ta = QAction(label, self, checkable=True)
+            ta.setChecked(key == current_mode)
+            ta.triggered.connect(lambda _c=False, k=key: self.set_theme(k))
+            self.theme_group.addAction(ta)
+            self.theme_actions[key] = ta
 
         # ferramentas (exclusivas)
         self.tool_group = QActionGroup(self)
@@ -282,6 +348,8 @@ class MainWindow(QMainWindow):
             (V.NOTE, "Nota", "note", "N", "Adicionar comentário"),
             (V.IMAGE, "Imagem", "image", "I", "Arraste a área e escolha a imagem"),
             (V.CROP, "Recortar", "crop", "C", "Arraste a área visível da página"),
+            (V.SIGN, "Assinar com certificado digital", "signature", "G",
+             "Arraste a área onde o carimbo da assinatura digital (A1/A3, ICP-Brasil) deve aparecer"),
         ):
             a = A(text, lambda _c=False, k=key: self.set_tool(k), sc, ic, tip, checkable=True)
             a.setIcon(icon(ic))
@@ -311,12 +379,22 @@ class MainWindow(QMainWindow):
         m.addActions([self.a_zoom_in, self.a_zoom_out, self.a_zoom100, self.a_fit_w, self.a_fit_p])
         m.addSeparator()
         m.addActions([self.a_organize, self.a_thumbs])
+        m.addSeparator()
+        tm = m.addMenu("Tema")
+        tm.addActions(list(self.theme_actions.values()))
+        tm.addSeparator()
+        tm.addAction(self.a_theme)
         m = mb.addMenu("&Páginas")
         m.addActions([self.a_rot_r, self.a_rot_l, self.a_dup, self.a_blank, self.a_ins])
         m.addSeparator()
         m.addActions([self.a_extract, self.a_split, self.a_reverse, self.a_del])
         m = mb.addMenu("&Ferramentas")
         m.addActions([self.a_merge, self.a_split_files, self.a_convert])
+        m.addSeparator()
+        m.addActions([self.a_ocr, self.a_translate])
+        m.addSeparator()
+        m.addAction(self.tool_actions[V.SIGN])
+        m.addActions([self.a_sign_inv, self.a_verify])
         m.addSeparator()
         m.addActions([self.a_shell_on, self.a_shell_off])
         m = mb.addMenu("Aj&uda")
@@ -353,16 +431,16 @@ class MainWindow(QMainWindow):
         self.page_spin.setToolTip("Ir para a página")
         tb.addWidget(self.page_spin)
         self.page_total = QLabel(" / 0 ")
-        self.page_total.setStyleSheet("color:#6b7280;padding-right:4px")
+        self.page_total.setObjectName("Muted")
         tb.addWidget(self.page_total)
         tb.addWidget(_sep())
         tb.addActions([self.a_organize, self.a_rot_l, self.a_rot_r])
         tb.addWidget(_sep())
-        tb.addActions([self.a_split, self.a_convert])
+        tb.addActions([self.a_split, self.a_convert, self.a_ocr, self.a_translate, self.a_verify])
         merge_btn = QToolButton()
         merge_btn.setObjectName("Primary")
         merge_btn.setDefaultAction(self.a_merge)
-        merge_btn.setIcon(icon("merge", "#ffffff"))
+        self.merge_btn = merge_btn
         merge_btn.setText("Unir PDFs")
         merge_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         tb.addWidget(merge_btn)
@@ -372,13 +450,14 @@ class MainWindow(QMainWindow):
         self.search_box = QLineEdit()
         self.search_box.setObjectName("SearchBox")
         self.search_box.setPlaceholderText("Localizar no documento…")
-        self.search_box.addAction(icon("search", "#8a919c"), QLineEdit.LeadingPosition)
+        self._search_icon = self.search_box.addAction(icon("search"), QLineEdit.LeadingPosition)
         self.search_box.setFixedWidth(240)
         self.search_box.setClearButtonEnabled(True)
         tb.addWidget(self.search_box)
         self.search_lbl = QLabel("")
-        self.search_lbl.setStyleSheet("color:#6b7280;padding:0 6px")
+        self.search_lbl.setObjectName("Muted")
         tb.addWidget(self.search_lbl)
+        tb.addAction(self.a_theme)
         tb.addAction(self.a_about)
 
         rail = QToolBar("Ferramentas")
@@ -392,7 +471,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.LeftToolBarArea, rail)
         for key, a in self.tool_actions.items():
             rail.addAction(a)
-            if key in (V.PAN, V.ADD_TEXT, V.NOTE):
+            if key in (V.PAN, V.ADD_TEXT, V.NOTE, V.CROP):
                 rail.addWidget(self._rail_sep())
         self.rail = rail
 
@@ -400,7 +479,8 @@ class MainWindow(QMainWindow):
     def _rail_sep():
         w = QWidget()
         w.setFixedHeight(9)
-        w.setStyleSheet("border-bottom:1px solid #e3e6eb;margin:0 12px 4px 12px")
+        w.setObjectName("RailSep")
+        w.setAttribute(Qt.WA_StyledBackground, True)
         return w
 
     def _build_status(self):
@@ -420,7 +500,7 @@ class MainWindow(QMainWindow):
 
     def _set_saved_badge(self, text, dirty=False):
         self.st_saved.setObjectName("DirtyBadge" if dirty else "SavedBadge")
-        self.st_saved.setStyleSheet("color:#b26a00" if dirty else "color:#1b8a3a")
+        self.st_saved.setStyleSheet(f"color:{c('warn') if dirty else c('ok')}")
         self.st_saved.setText(text)
 
     def _connect(self):
@@ -475,7 +555,8 @@ class MainWindow(QMainWindow):
         has = pdoc is not None
         for a in (self.a_save, self.a_save_as, self.a_print, self.a_props, self.a_export,
                   self.a_rot_r, self.a_rot_l, self.a_del, self.a_dup, self.a_blank, self.a_ins,
-                  self.a_extract, self.a_split, self.a_reverse, self.a_organize):
+                  self.a_extract, self.a_split, self.a_reverse, self.a_organize, self.a_ocr,
+                  self.a_translate, self.a_sign_inv, self.a_verify):
             a.setEnabled(has)
         self.st_saved.setText("")
         self.stack.setCurrentIndex(1 if has else 0)
@@ -491,6 +572,11 @@ class MainWindow(QMainWindow):
         return self.pdoc is None
 
     def load(self, path: str, organize=False):
+        if not path:
+            return False
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, APP_NAME, f"Arquivo não encontrado:\n{path}")
+            return False
         try:
             pdoc = PdfDocument(path)
         except Exception as e:
@@ -509,6 +595,12 @@ class MainWindow(QMainWindow):
             pdoc.modified = True
             self._converted_name = str(Path(path).with_suffix(".pdf"))
         self.set_document(pdoc)
+        if pdoc.is_native_pdf() and sig.has_signatures(path):
+            self.statusBar().showMessage("🔏 Documento assinado digitalmente — Ferramentas › Verificar "
+                                         "assinaturas digitais", 12000)
+        elif pdoc.page_count and not any(pdoc.doc[i].get_text().strip() for i in range(min(3, pdoc.page_count))):
+            self.statusBar().showMessage("Este PDF parece digitalizado (sem texto). Use “Reconhecer texto "
+                                         "(OCR)” para pesquisar, copiar e traduzir.", 12000)
         if organize:
             self.a_organize.setChecked(True)
             self.toggle_organize()
@@ -616,6 +708,20 @@ class MainWindow(QMainWindow):
         return self._do_save(path)
 
     def _do_save(self, path) -> bool:
+        if self.pdoc.path and os.path.abspath(path) == os.path.abspath(self.pdoc.path) \
+                and sig.has_signatures(path):
+            r = QMessageBox.warning(
+                self, APP_NAME, "Este PDF possui assinatura digital. Salvar alterações sobre ele "
+                "invalidará as assinaturas.\n\nDeseja salvar as alterações em uma cópia?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if r == QMessageBox.Cancel:
+                return False
+            if r == QMessageBox.Yes:
+                p = Path(path)
+                path, _ = QFileDialog.getSaveFileName(self, "Salvar cópia", str(p.with_name(p.stem + "_editado.pdf")),
+                                                      PDF_FILTER)
+                if not path:
+                    return False
         try:
             info = self.pdoc.save(path, self.save_password)
         except Exception as e:
@@ -726,6 +832,9 @@ class MainWindow(QMainWindow):
 
     def area_tool(self, tool, page_no, rect):
         r = pymupdf.Rect(rect)
+        if tool == V.SIGN:
+            self.sign_document(page_no, r)
+            return
         if tool == V.HIGHLIGHT:
             self.pdoc.highlight(page_no, r)
         elif tool == V.RECT:
@@ -902,6 +1011,118 @@ class MainWindow(QMainWindow):
         if self.pdoc.path:
             dlg.out_dir.setText(str(Path(self.pdoc.path).parent))
         dlg.exec()
+
+    # ================================================================== OCR e tradução
+    def _scope_args(self):
+        return self.pdoc.page_count, self.view.current, self.thumbs.selected_rows()
+
+    def ocr_dialog(self):
+        if not self.pdoc:
+            return
+        dlg = OcrDialog(self, *self._scope_args())
+        if not dlg.exec():
+            return
+        pages, langs, dpi = dlg.selected_pages, dlg.langs(), dlg.dpi.currentData()
+        skip = dlg.skip.isChecked()
+        if dlg.mode_search.isChecked():
+            self.pdoc.checkpoint(f"Reconheceu texto (OCR) em {len(pages)} página(s)")
+
+            def done(res):
+                self.refresh(pages=pages)
+                done_pages = res["paginas_ocr"]
+                msg = (f"OCR concluído: {len(done_pages)} página(s) agora pesquisáveis "
+                       f"({res['palavras']} palavras reconhecidas).")
+                if res["paginas_com_texto"]:
+                    msg += f"\n{len(res['paginas_com_texto'])} página(s) já tinham texto e foram mantidas."
+                QMessageBox.information(self, APP_NAME, msg + "\n\nSalve o documento para manter o resultado.")
+
+            def failed(msg):
+                self.pdoc.undo()  # descarta o ponto de restauração criado para o OCR
+                self.refresh(structural=True)
+                QMessageBox.critical(self, APP_NAME, f"Falha no OCR: {msg}")
+
+            run_task(self, "Reconhecendo texto (OCR)...", ocr.make_searchable, self.pdoc.doc, pages, langs,
+                     dpi, skip, on_done=done, on_error=failed, with_progress=True)
+        else:
+            def done_text(items):
+                text = "\n\n".join(f"──── Página {n}{' (OCR)' if was_ocr else ''} ────\n{t.strip()}"
+                                    for n, t, was_ocr in items)
+                TextResultDialog(self, "Texto reconhecido", text, Path(self.pdoc.title).stem).exec()
+
+            run_task(self, "Reconhecendo texto (OCR)...", ocr.extract_text, self.pdoc.doc, pages, langs,
+                     dpi, skip, on_done=done_text, with_progress=True)
+
+    def translate_dialog(self):
+        if not self.pdoc:
+            return
+        dlg = TranslateDialog(self, *self._scope_args())
+        if not dlg.exec():
+            return
+        pages, target, source = dlg.selected_pages, dlg.dst.currentData(), dlg.src.currentData()
+        if not any(self.pdoc.doc[p].get_text().strip() for p in pages):
+            QMessageBox.information(self, APP_NAME, "As páginas escolhidas não têm texto digital. "
+                                    "Use primeiro “Reconhecer texto (OCR)”.")
+            return
+        stem = Path(self.pdoc.title).stem
+        if dlg.as_pdf.isChecked():
+            def done(newdoc):
+                pd = PdfDocument(doc=newdoc)
+                pd.modified = True
+                pd.edits.append(f"Traduzido para {tr.LANGS.get(target, target)}")
+                w = self.ctrl.new_window(pd)
+                w._converted_name = str(Path(self.pdoc.path or stem).with_name(f"{stem}_traduzido_{target}.pdf"))
+            run_task(self, "Traduzindo o documento...", tr.translate_pdf, self.pdoc.doc, pages, target,
+                     source, on_done=done, with_progress=True)
+        else:
+            text = "\n\n".join(self.pdoc.doc[p].get_text("text", sort=True).strip() for p in pages)
+            dlg2 = TextResultDialog(self, "Tradução", text, stem)
+            dlg2.lang.setCurrentIndex(max(0, dlg2.lang.findData(target)))
+            run_task(self, "Traduzindo...", tr.translate_text, text, target, source,
+                     on_done=lambda t: (dlg2.dst.setPlainText(t), dlg2.exec()), with_progress=True)
+
+    # ================================================================== assinatura digital
+    def _require_saved_pdf(self, action="assinar") -> bool:
+        if self.pdoc.modified or not self.pdoc.path or not self.pdoc.is_native_pdf():
+            r = QMessageBox.question(self, APP_NAME, f"Para {action}, o documento precisa estar salvo. Salvar agora?")
+            if r != QMessageBox.Yes or not self.save():
+                return False
+        return True
+
+    def sign_document(self, page_no, rect):
+        if not self.pdoc or not self._require_saved_pdf():
+            return
+        dlg = SignDialog(self, self.pdoc.path, visible=rect is not None)
+        if not dlg.exec():
+            return
+        params = dlg.params()
+        out = dlg.out_path.text()
+        kw = {}
+        if rect is not None:
+            kw = dict(page_index=page_no, rect=tuple(rect), mediabox=tuple(self.pdoc.doc[page_no].mediabox))
+
+        def done(info):
+            doc_id = f"CPF {info['cpf']}" if info.get("cpf") else (f"CNPJ {info['cnpj']}" if info.get("cnpj") else "")
+            QMessageBox.information(
+                self, APP_NAME, f"✔ Documento assinado digitalmente.\n\nSignatário: {info['signatario']}"
+                f"{' — ' + doc_id if doc_id else ''}\nCarimbo do tempo: {'sim' if info['carimbo_tempo'] else 'não'}"
+                f"\nArquivo: {out}\n\nNão edite o PDF assinado: qualquer alteração invalida a assinatura.")
+            from .config import log_save
+            log_save({"arquivo": out, "data_hora": now_str(), "paginas": self.pdoc.page_count,
+                      "alteracoes": [f"Assinado digitalmente por {info['signatario']}"]})
+            self.set_tool(V.SELECT)
+            self.load(out)
+
+        run_task(self, "Assinando...", sig.sign_pdf, self.pdoc.path, out, on_done=done, **params, **kw)
+
+    def verify_signatures(self):
+        if not self.pdoc:
+            return
+        if not self.pdoc.path or not self.pdoc.is_native_pdf():
+            QMessageBox.information(self, APP_NAME, "Este documento não possui assinaturas digitais.")
+            return
+        path = self.pdoc.path
+        run_task(self, "Verificando assinaturas...", sig.verify_pdf, path,
+                 on_done=lambda res: VerifyDialog(self, path, res).exec())
 
     # ================================================================== modos de exibição
     def toggle_organize(self):

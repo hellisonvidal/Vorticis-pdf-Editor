@@ -26,6 +26,7 @@ from .document import merge_files, split_document, split_groups
 from .fonts import (all_font_labels, catalog, describe_span, font_from_choice, missing_glyphs,
                     qt_family, resolve_font, strip_subset)
 from .tasks import run_task
+from .theme import c as tc
 from .viewer import render_page
 
 PDF_FILTER = "PDF (*.pdf)"
@@ -74,10 +75,10 @@ def int_to_rgb(color: int):
 
 
 SOURCE_TEXT = {
-    "embutida": ("✔ Fonte original do documento (embutida no PDF)", "#1b8a3a"),
-    "sistema": ("✔ Mesma fonte, instalada no computador", "#1b8a3a"),
-    "similar": ("≈ Fonte equivalente instalada (métricas compatíveis)", "#b26a00"),
-    "padrão": ("⚠ Fonte original indisponível — usando a fonte padrão mais próxima", "#c0392b"),
+    "embutida": ("✔ Fonte original do documento (embutida no PDF)", "ok"),
+    "sistema": ("✔ Mesma fonte, instalada no computador", "ok"),
+    "similar": ("≈ Fonte equivalente instalada (métricas compatíveis)", "warn"),
+    "padrão": ("⚠ Fonte original indisponível — usando a fonte padrão mais próxima", "accent_text"),
 }
 
 
@@ -112,7 +113,7 @@ class TextDialog(QDialog):
                     ("Tipo", info["tipo"] or "—"), ("Embutida no PDF", emb)]
             for i, (k, v) in enumerate(rows):
                 lk = QLabel(k + ":")
-                lk.setStyleSheet("color:#6b7280")
+                lk.setObjectName("Muted")
                 lv = QLabel(v)
                 lv.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 g.addWidget(lk, i // 2, (i % 2) * 2)
@@ -125,7 +126,7 @@ class TextDialog(QDialog):
             self.source_lbl = QLabel()
             lay.addWidget(QLabel("O texto será inserido no ponto clicado. Use \u21b5 para várias linhas."))
 
-        hint = QLabel("<b>Texto</b>" + ("  <span style='color:#6b7280'>— uma linha; ajustado ao espaço "
+        hint = QLabel("<b>Texto</b>" + (f"  <span style='color:{tc('muted')}'>— uma linha; ajustado ao espaço "
                                         "disponível para não sobrepor linhas e marcações</span>" if span else ""))
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -201,9 +202,10 @@ class TextDialog(QDialog):
             text = " ".join(text.split("\n"))
         font = self._chosen_font(text or "Aa")
         self._font = font
-        msg, color = SOURCE_TEXT.get(font.source, ("", "#333"))
+        msg, color = SOURCE_TEXT.get(font.source, ("", "text"))
         if self.font_combo.currentData() not in ("__detected__", None):
-            msg, color = (f"Fonte escolhida manualmente: {font.label}", "#3b4250")
+            msg, color = (f"Fonte escolhida manualmente: {font.label}", "text")
+        color = tc(color)
         self.source_lbl.setText(f"<span style='color:{color}'><b>Será usada:</b> {font.label} — {msg}</span>")
         size = self.size.value()
         warns = []
@@ -226,7 +228,7 @@ class TextDialog(QDialog):
             if n:
                 warns.append(f"⚠ Neste ponto o texto ficará sobre {n} elemento(s) existente(s) "
                              "(texto, linhas ou marcações). Clique em outro lugar se preferir.")
-        self.warn.setText("<br>".join(f"<span style='color:#b26a00'>{w}</span>" for w in warns))
+        self.warn.setText("<br>".join(f"<span style='color:{tc('warn')}'>{w}</span>" for w in warns))
         fam = qt_family(font) or "Arial"
         bold = font.base14 in ("hebo", "tibo", "cobo", "hebi", "tibi", "cobi") or \
             any(w in font.label.lower() for w in ("bold", "negrito", "black", "heavy"))
@@ -235,7 +237,7 @@ class TextDialog(QDialog):
         pt = max(7.0, min(28.0, self._final_size * 1.3))
         # a prévia usa estilo próprio (o tema global definiria outra fonte)
         self.preview.setStyleSheet(
-            "background:white;border:1px solid #e3e6eb;border-radius:8px;padding:8px;"
+            f"background:white;border:1px solid {tc('border')};border-radius:8px;padding:8px;"
             f"font-family:'{fam}';font-size:{pt:.1f}pt;font-weight:{700 if bold else 400};"
             f"font-style:{'italic' if italic else 'normal'};"
             f"color:{QColor.fromRgbF(*self.color.rgb).name()}")
@@ -254,7 +256,7 @@ class SaveInfoDialog(QDialog):
         self.setWindowTitle(APP_NAME + " — Informações de salvamento")
         self.setMinimumWidth(560)
         lay = QVBoxLayout(self)
-        head = QLabel(f"<h3 style='color:#1b8a3a'>✔ {title}</h3>")
+        head = QLabel(f"<h3 style='color:{tc('ok')}'>✔ {title}</h3>")
         lay.addWidget(head)
         rows = [("Arquivo", info.get("arquivo", "")), ("Data/hora", info.get("data_hora", "")),
                 ("Páginas", str(info.get("paginas", ""))),
@@ -461,6 +463,8 @@ class FileList(QListWidget):
             self.add(f)
 
     def add(self, path):
+        if not path or not os.path.isfile(path):
+            return
         if self.exts and Path(path).suffix.lower() not in self.exts:
             return
         if path in self.files():
@@ -477,7 +481,7 @@ class FileList(QListWidget):
         self.addItem(it)
 
     def files(self):
-        return [self.item(i).data(Qt.UserRole) for i in range(self.count())]
+        return [p for p in (self.item(i).data(Qt.UserRole) for i in range(self.count())) if p]
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
@@ -822,33 +826,33 @@ class AboutDialog(QDialog):
         logo.setAlignment(Qt.AlignCenter)
         lay.addWidget(logo)
         title = QLabel(f"<div style='font-size:18pt;font-weight:700'>{APP_NAME}</div>"
-                       f"<div style='color:#6b7280'>Versão {__version__}"
+                       f"<div style='color:{tc('muted')}'>Versão {__version__}"
                        f"{' • edição portátil' if is_portable() else ''}</div>")
         title.setAlignment(Qt.AlignCenter)
         lay.addWidget(title)
 
-        ai = QLabel("<div style='font-size:11.5pt;font-weight:700;color:#d6232d'>"
+        ai = QLabel(f"<div style='font-size:11.5pt;font-weight:700;color:{tc('accent_text')}'>"
                     "🤖 Desenvolvido integralmente com Inteligência Artificial</div>"
                     "<div style='margin-top:4px'>Todo o código, o design e o ícone deste programa "
                     "foram criados por IA, a partir das ideias e orientações do autor.</div>")
         ai.setWordWrap(True)
         ai.setAlignment(Qt.AlignCenter)
-        ai.setStyleSheet("background:#fde8e9;border:1px solid #f6c4c7;border-radius:12px;padding:12px")
+        ai.setObjectName("AiBox")
         lay.addWidget(ai)
 
-        free = QLabel("<div style='font-size:11.5pt;font-weight:700;color:#1b8a3a'>"
+        free = QLabel(f"<div style='font-size:11.5pt;font-weight:700;color:{tc('ok')}'>"
                       "💚 Gratuito — hoje e sempre</div>"
                       "<div style='margin-top:4px'>Sem anúncios, sem assinatura, sem marca-d'água e sem "
                       "limite de uso. Este software é e <b>sempre será gratuito</b>.</div>")
         free.setWordWrap(True)
         free.setAlignment(Qt.AlignCenter)
-        free.setStyleSheet("background:#e8f6ec;border:1px solid #bfe5c9;border-radius:12px;padding:12px")
+        free.setObjectName("FreeBox")
         lay.addWidget(free)
 
         details = QLabel(
             "Visualizador, editor e conversor de PDF para Windows.<br>"
             f"{len(catalog.fonts)} fontes do sistema disponíveis para edição.<br>"
-            "<small style='color:#6b7280'>Software livre (licença AGPL-3.0) • Qt/PySide6 • PyMuPDF<br>"
+            f"<small style='color:{tc('muted')}'>Software livre (licença AGPL-3.0) • Qt/PySide6 • PyMuPDF<br>"
             f"Registro de erros: {log_path()}</small>")
         details.setWordWrap(True)
         details.setAlignment(Qt.AlignCenter)

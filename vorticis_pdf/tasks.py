@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from . import APP_NAME
 from .config import log_error
+from .i18n import friendly
 
 PDF_LOCK = threading.RLock()
 _RUNNING: set = set()
@@ -65,16 +66,16 @@ class _Relay(QObject):
                 self.on_done(result)
             except Exception as e:
                 log_error("Erro ao concluir tarefa", traceback.format_exc())
-                QMessageBox.critical(self.parent_widget, APP_NAME, f"Falha: {e}")
+                QMessageBox.critical(self.parent_widget, APP_NAME, f"Falha: {friendly(e)}")
 
     @Slot(str, str)
     def fail(self, msg, tb):
         self.dlg.close()
         log_error("Erro em tarefa", tb)
         if self.on_error:
-            self.on_error(msg)
+            self.on_error(friendly(msg))
         else:
-            QMessageBox.critical(self.parent_widget, APP_NAME, f"Falha: {msg}")
+            QMessageBox.critical(self.parent_widget, APP_NAME, f"Falha: {friendly(msg)}")
 
 
 def run_task(parent, label, fn, *args, on_done=None, on_error=None, with_progress=False, **kwargs):

@@ -7,9 +7,7 @@ from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-NORMAL = "#3b4250"
 ACTIVE = "#ffffff"
-DISABLED = "#b4bac4"
 ACCENT = "#d6232d"
 
 _P = {
@@ -47,6 +45,13 @@ _P = {
     "note": '<path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4z"/><path d="M8 8h8M8 12h5"/>',
     "image": '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="1.8"/><path d="M21 16l-5-5-9 9"/>',
     "crop": '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/>',
+    "ocr": '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 9h10M7 12h10M7 15h6"/>',
+    "translate": '<path d="M4 5h9M8.5 3v2M6 5c.8 3.3 2.9 5.9 6 7.5M11 5c-.9 3.6-3.4 6.6-7 8"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/>',
+    "signature": '<path d="M3 17c2.5 0 3.5-6 5.5-6s1 5 3 5 2.5-3 4-3 1.5 2 2.5 2H21"/><path d="M3 21h18"/><path d="M15 3l3 3-7 7H8v-3z"/>',
+    "shield": '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+    "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    "copy": '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
     "font": '<path d="M4 20L10 4h1l6 16M6.5 14h8"/><path d="M17 20h4"/>',
 }
 
@@ -68,16 +73,38 @@ def _pixmap(name, color, size):
     return pm
 
 
+def icon(name: str, color: str | None = None, active: str = ACTIVE) -> QIcon:
+    """Ícone com cores para os estados normal, marcado (botão ativo) e desabilitado.
+    Sem 'color', usa a cor de ícone do tema atual (claro/escuro)."""
+    from .theme import c
+    return _icon(name, color or c("icon"), active, c("icon_disabled"))
+
+
 @lru_cache(maxsize=None)
-def icon(name: str, color: str = NORMAL, active: str = ACTIVE) -> QIcon:
-    """Ícone com cores para os estados normal, marcado (botão ativo) e desabilitado."""
+def _icon(name, color, active, disabled) -> QIcon:
     ic = QIcon()
     for size in (16, 20, 24, 32, 48):
         ic.addPixmap(_pixmap(name, color, size), QIcon.Normal, QIcon.Off)
         ic.addPixmap(_pixmap(name, active, size), QIcon.Normal, QIcon.On)
         ic.addPixmap(_pixmap(name, active, size), QIcon.Active, QIcon.On)
-        ic.addPixmap(_pixmap(name, DISABLED, size), QIcon.Disabled, QIcon.Off)
+        ic.addPixmap(_pixmap(name, disabled, size), QIcon.Disabled, QIcon.Off)
     return ic
+
+
+_listeners = []
+
+
+def on_retheme(fn):
+    """Registra uma função chamada quando o tema muda (para trocar os ícones)."""
+    _listeners.append(fn)
+
+
+def retheme():
+    for fn in list(_listeners):
+        try:
+            fn()
+        except RuntimeError:  # janela já fechada
+            _listeners.remove(fn)
 
 
 def accent(name: str) -> QIcon:

@@ -374,7 +374,9 @@ def qt_family(font: ResolvedFont) -> str:
     try:
         from PySide6.QtCore import QByteArray
         from PySide6.QtGui import QFontDatabase
-        data = font.fontbuffer or Path(font.fontfile).read_bytes()
+        data = font.fontbuffer or (Path(font.fontfile).read_bytes() if font.fontfile else b"")
+        if not data:
+            return ""
         fid = QFontDatabase.addApplicationFontFromData(QByteArray(data))
         fams = QFontDatabase.applicationFontFamilies(fid) if fid >= 0 else []
         fam = fams[0] if fams else ""

@@ -95,6 +95,51 @@ def run() -> int:
             log(f"conversão PDF -> {fmt} OK")
         conv.to_pdf(str(tmp / "saida.txt"), str(tmp / "de_txt.pdf"))
         log("conversão TXT -> PDF OK")
+        # tradução da interface (pt-BR)
+        from PySide6.QtWidgets import QDialogButtonBox
+        from . import i18n
+        i18n.install(app)
+        box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        texts = [b.text() for b in box.buttons()]
+        assert "Cancelar" in texts, texts
+        log("interface em português OK")
+
+        # OCR de página digitalizada (sem internet)
+        from . import ocr
+        srcd = pymupdf.open()
+        pg = srcd.new_page()
+        pg.insert_text((72, 100), "Relatório digitalizado de teste", fontsize=18)
+        scan = pymupdf.open()
+        sp = scan.new_page()
+        sp.insert_image(sp.rect, pixmap=pg.get_pixmap(dpi=200))
+        res = ocr.make_searchable(scan, [0], ["por"])
+        assert res["paginas_ocr"] == [1] and scan[0].search_for("digitalizado"), res
+        log(f"OCR OK ({res['palavras']} palavras; idiomas: {', '.join(ocr.available_langs())})")
+
+        # assinatura digital com certificado A1 de teste + verificação
+        import datetime as dt
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        from cryptography.x509.oid import NameOID
+        from . import signature as sig
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TESTE VORTICIS:12345678901")])
+        now = dt.datetime.now(dt.timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(7).not_valid_before(now - dt.timedelta(days=1))
+                .not_valid_after(now + dt.timedelta(days=30)).sign(key, hashes.SHA256()))
+        pfx = tmp / "teste.pfx"
+        pfx.write_bytes(pkcs12.serialize_key_and_certificates(
+            b"t", key, cert, None, serialization.BestAvailableEncryption(b"1234")))
+        signed = str(tmp / "assinado.pdf")
+        page0 = pymupdf.open(out)[0]
+        sig.sign_pdf(out, signed, a1_path=str(pfx), a1_password="1234", page_index=0,
+                     rect=(72, 600, 300, 680), mediabox=tuple(page0.mediabox), reason="Teste")
+        ver = sig.verify_pdf(signed)
+        assert ver and ver[0]["integra"] and ver[0]["valida"] and ver[0]["cpf"] == "123.456.789-01", ver
+        log("assinatura digital e verificação OK")
         log("RESULTADO: SUCESSO")
         return 0
     except Exception:

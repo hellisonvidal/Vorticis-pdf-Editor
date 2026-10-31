@@ -41,6 +41,8 @@ def parse_ranges(text: str, page_count: int) -> list[list[int]]:
 def open_any(path: str) -> pymupdf.Document:
     """Abre PDF (sem travar o arquivo no Windows) ou converte formatos suportados nativamente
     (imagens, XPS, EPUB, CBZ, FB2, SVG, TXT) em PDF na memória."""
+    if not path:
+        raise ValueError("Nenhum arquivo informado")
     data = Path(path).read_bytes()
     ext = Path(path).suffix.lower().lstrip(".")
     doc = pymupdf.open(stream=data, filetype=ext or "pdf")

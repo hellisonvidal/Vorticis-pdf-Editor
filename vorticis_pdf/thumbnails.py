@@ -42,14 +42,19 @@ class ThumbList(QListWidget):
         self.customContextMenuRequested.connect(self._menu)
         self.itemDoubleClicked.connect(lambda it: self.pageActivated.emit(self.row(it)))
         self.itemClicked.connect(lambda it: self.pageActivated.emit(self.row(it)))
-        self.setStyleSheet("""
-            QListWidget{background:#262a31;color:#c9ced6;border:none;border-radius:0}
-            QListWidget::item{border-radius:10px;padding:6px;margin:2px}
-            QListWidget::item:selected{background:rgba(214,35,45,.85);color:white}
-            QListWidget::item:hover:!selected{background:#343a43}""")
+        self.apply_theme()
+
         self._timer = QTimer(self, singleShot=True, interval=0)
         self._timer.timeout.connect(self._render_batch)
         self._apply_size()
+
+    def apply_theme(self):
+        from .theme import c
+        self.setStyleSheet(f"""
+            QListWidget{{background:{c('sidebar')};color:{c('sidebar_text')};border:none;border-radius:0}}
+            QListWidget::item{{border-radius:10px;padding:6px;margin:2px}}
+            QListWidget::item:selected{{background:{c('accent')};color:white}}
+            QListWidget::item:hover:!selected{{background:{c('sidebar_hover')}}}""")
 
     # ---------------- conteúdo ----------------
     def set_document(self, doc, invalidate_all=False):

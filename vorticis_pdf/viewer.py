@@ -12,9 +12,9 @@ ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 
 PAGE_GAP = 14
 
 # ferramentas
-SELECT, EDIT_TEXT, ADD_TEXT, HIGHLIGHT, RECT, WHITEOUT, NOTE, IMAGE, CROP, PAN = (
-    "select", "edit_text", "add_text", "highlight", "rect", "whiteout", "note", "image", "crop", "pan")
-DRAG_TOOLS = {SELECT, HIGHLIGHT, RECT, WHITEOUT, IMAGE, CROP}
+SELECT, EDIT_TEXT, ADD_TEXT, HIGHLIGHT, RECT, WHITEOUT, NOTE, IMAGE, CROP, PAN, SIGN = (
+    "select", "edit_text", "add_text", "highlight", "rect", "whiteout", "note", "image", "crop", "pan", "sign")
+DRAG_TOOLS = {SELECT, HIGHLIGHT, RECT, WHITEOUT, IMAGE, CROP, SIGN}
 
 
 def pixmap_to_qimage(pix: pymupdf.Pixmap) -> QImage:
@@ -88,7 +88,8 @@ class PageWidget(QWidget):
         if self.drag_start is not None and self.drag_now is not None:
             colors = {HIGHLIGHT: QColor(255, 220, 0, 90), WHITEOUT: QColor(255, 255, 255, 200),
                       RECT: QColor(214, 35, 45, 30), CROP: QColor(0, 0, 0, 0),
-                      IMAGE: QColor(40, 120, 255, 40), SELECT: QColor(40, 120, 255, 40)}
+                      IMAGE: QColor(40, 120, 255, 40), SELECT: QColor(40, 120, 255, 40),
+                      SIGN: QColor(27, 138, 58, 45)}
             r = QRectF(self.drag_start, self.drag_now).normalized()
             p.fillRect(r, colors.get(self.view.tool, QColor(0, 0, 0, 30)))
             p.setPen(QPen(QColor(30, 30, 30), 1, Qt.DashLine))
@@ -185,7 +186,7 @@ class PdfView(QScrollArea):
         self.setWidgetResizable(False)
         self.setAlignment(Qt.AlignHCenter)
         self.setBackgroundRole(self.backgroundRole())
-        self.setStyleSheet("QScrollArea{background:#3a3f47;border:none} #pdfContainer{background:#3a3f47}")
+        self.apply_theme()
         self.container = QWidget()
         self.container.setObjectName("pdfContainer")
         self.layout_ = QVBoxLayout(self.container)
@@ -197,6 +198,11 @@ class PdfView(QScrollArea):
         self._render_timer = QTimer(self, singleShot=True, interval=0)
         self._render_timer.timeout.connect(self._render_next)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+
+    def apply_theme(self):
+        from .theme import c
+        bg = c("canvas")
+        self.setStyleSheet(f"QScrollArea{{background:{bg};border:none}} #pdfContainer{{background:{bg}}}")
 
     # ---------------- documento ----------------
     def set_document(self, doc: pymupdf.Document | None, keep_position=True):

@@ -107,6 +107,33 @@ VorticisPDF.exe --to-pdf documento.docx  (Office/imagens → PDF)
 VorticisPDF.exe --register-shell | --unregister-shell
 ```
 
+### OCR: reconhecer texto de documentos digitalizados
+**Ferramentas › Reconhecer texto (OCR)** (`Ctrl+Shift+O`). Funciona **sem internet** e sem instalar nada.
+* **Tornar o PDF pesquisável:** adiciona o texto reconhecido como camada invisível. A aparência da página não muda, e o texto passa a poder ser pesquisado, selecionado, copiado e convertido para Word ou Excel.
+* **Extrair o texto:** abre o texto reconhecido para copiar, salvar (`.txt` ou `.docx`) ou traduzir.
+* Português, inglês e espanhol já vêm incluídos. Outros 20 idiomas (francês, alemão, italiano, japonês, chinês, russo, árabe...) podem ser baixados uma única vez pela própria janela.
+* Há três níveis de qualidade (200, 300 ou 400 dpi). As páginas que já têm texto digital podem ser ignoradas.
+* Ao abrir um PDF sem texto, o programa sugere o OCR.
+
+### Tradução
+**Ferramentas › Traduzir documento** (`Ctrl+Shift+L`). Usa um serviço on-line gratuito, sem cadastro, e por isso requer internet.
+* **Novo PDF traduzido mantendo o layout:** cada bloco de texto é trocado pela tradução no mesmo lugar, com tamanho ajustado, sem apagar imagens, linhas ou tabelas.
+* **Somente o texto:** abre a tradução lado a lado com o original, para copiar ou salvar.
+* São 30 idiomas, com detecção automática do idioma de origem. Em documentos digitalizados, faça o OCR antes de traduzir.
+
+### Assinatura digital com certificado (ICP-Brasil)
+Use a ferramenta **Assinar** na barra lateral (`G`) e arraste a área onde o carimbo deve aparecer. Para assinar sem carimbo, use **Ferramentas › Assinar digitalmente (invisível)**.
+* **Certificado A1:** arquivo `.pfx` ou `.p12`, com senha.
+* **Certificado A3:** token USB ou cartão inteligente, com PIN. O driver do fabricante é detectado automaticamente: SafeNet, Watchdata, GD/Valid, Oberthur, Feitian, Bit4id, OpenSC e outros. Também é possível indicar a `.dll` manualmente.
+* Segue o padrão **PAdES** (o mesmo usado pelo gov.br e pelo ITI). O carimbo visível mostra nome, CPF ou CNPJ lido do certificado ICP-Brasil, data e motivo. O motivo, o local e o contato podem ser preenchidos.
+* **Carimbo do tempo** opcional, por servidor gratuito, para comprovar a data da assinatura.
+* O arquivo original não é alterado, porque a assinatura é gravada num novo arquivo `_assinado.pdf`. Se você tentar salvar alterações sobre um PDF assinado, o programa avisa e oferece salvar uma cópia.
+* **Ferramentas › Verificar assinaturas digitais** mostra o signatário, o CPF ou CNPJ, a data e a integridade. Também mostra se o documento foi **alterado depois de assinado** e se o certificado é de uma autoridade confiável instalada no Windows.
+
+### Tema escuro e idioma
+* **Exibir › Tema:** *Seguir o Windows* (padrão), *Claro* ou *Escuro*. O botão ☾ / ☀ na barra superior alterna entre eles (`Ctrl+Shift+T`).
+* Toda a interface está em **português do Brasil**, inclusive os botões e janelas padrão do sistema (Salvar, Cancelar, seletor de arquivos, impressão, cores) e as mensagens de erro técnicas mais comuns.
+
 ### Diagnóstico de erros
 Se algo der errado, o programa mostra uma mensagem e continua aberto. Os detalhes, inclusive falhas internas, ficam em **Ajuda › Abrir registro de erros** (`vorticis_erros.log`).
 
@@ -118,12 +145,13 @@ Requer Python 3.10 ou superior no Windows:
 build_windows.bat
 ```
 
-O script gera `dist\VorticisPDF\VorticisPDF.exe`. Se o [Inno Setup](https://jrsoftware.org/isinfo.php) estiver instalado, também gera o instalador em `installer\Output\`.
+O script baixa os modelos de OCR e gera `dist\VorticisPDF\VorticisPDF.exe`. Se o [Inno Setup](https://jrsoftware.org/isinfo.php) estiver instalado, também gera o instalador em `installer\Output\`.
 
 Para rodar sem compilar:
 
 ```bat
 pip install -r requirements.txt
+python tools/fetch_tessdata.py
 python vorticis.py
 ```
 
@@ -141,6 +169,12 @@ vorticis_pdf/
   converters.py        conversões entre formatos
   dialogs.py           diálogos (texto, unir, separar, converter, salvamento, propriedades)
   printing.py          impressão com pré-visualização
+  ocr.py               OCR (Tesseract embutido no PyMuPDF)
+  translate.py         tradução de textos e de PDFs mantendo o layout
+  signature.py         assinatura digital A1/A3 (pyHanko, PAdES) e verificação
+  features.py          diálogos de OCR, tradução e assinatura
+  theme.py / icons.py  temas claro/escuro e ícones vetoriais
+  i18n.py              tradução pt-BR dos componentes padrão do Qt
   shell_integration.py menu de contexto do Explorer (HKCU)
   single_instance.py   agrupa os arquivos selecionados no Explorer
 ```
