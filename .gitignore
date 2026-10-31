@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec.bak
+.venv/
+venv/
+installer/Output/
