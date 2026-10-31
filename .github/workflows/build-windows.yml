@@ -101,10 +101,15 @@ jobs:
           name: VorticisPDF-Portatil-${{ steps.ver.outputs.v }}
           path: VorticisPDF-Portatil-*.zip
 
+      # publica a versão automaticamente a cada envio para a main (cria a tag v<versão>);
+      # enviar de novo a mesma versão apenas atualiza os arquivos da release
       - name: Publicar release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ver.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           name: Vorticis PDF Editor ${{ steps.ver.outputs.v }}
           body_path: installer/release_notes.md
           files: |
