@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import tempfile
+import zlib
 from pathlib import Path
 
 import pymupdf
@@ -178,20 +179,109 @@ class PdfDocument:
             self.doc[r].set_cropbox(rect & self.doc[r].mediabox)
 
     # ---------------- conteúdo ----------------
-    def replace_text(self, page_no: int, bbox, origin, new_text: str, font: ResolvedFont,
-                     size: float, color, direction=(1, 0)):
-        """Remove o texto original da área e escreve o novo com a fonte reconhecida."""
+    @staticmethod
+    def _text_band(span) -> pymupdf.Rect:
+        """Faixa central do trecho (entre a linha de base e a altura do 'x').
+
+        Remover só essa faixa apaga os caracteres do trecho sem atingir as linhas de
+        texto vizinhas (cujas caixas costumam se sobrepor) nem linhas e marcações."""
+        bbox = pymupdf.Rect(span["bbox"])
+        d = span.get("dir", (1, 0))
+        if round(d[0]) == 1 and round(d[1]) == 0:
+            oy, size = span["origin"][1], span["size"]
+            return pymupdf.Rect(bbox.x0 + 0.4, oy - size * 0.55, bbox.x1 - 0.4, oy - size * 0.12)
+        w, h = bbox.width * 0.2, bbox.height * 0.2
+        return pymupdf.Rect(bbox.x0 + w, bbox.y0 + h, bbox.x1 - w, bbox.y1 - h)
+
+    def available_width(self, page_no: int, span) -> float:
+        """Largura livre a partir do início do trecho até o próximo obstáculo à direita:
+        outro texto na mesma linha, borda de tabela/retângulo, linha vertical ou margem."""
+        page = self.doc[page_no]
+        bbox = pymupdf.Rect(span["bbox"])
+        band = self._text_band(span)
+        x0 = bbox.x0
+        limit = page.rect.width - 2 if page.rotation in (0, 180) else page.rect.height - 2
+        limit = min(limit, page.mediabox.x1 - 2)
+        for b in page.get_text("dict")["blocks"]:
+            for l in b.get("lines", []):
+                for s in l["spans"]:
+                    r = pymupdf.Rect(s["bbox"])
+                    if not s["text"].strip() or r == bbox:
+                        continue
+                    if r.x0 > bbox.x0 + 1 and r.y0 < band.y1 and r.y1 > band.y0:
+                        limit = min(limit, r.x0)
+        try:
+            drawings = page.get_drawings()
+        except Exception:
+            drawings = []
+        for dr in drawings:
+            for it in dr.get("items", []):
+                if it[0] == "l":
+                    p1, p2 = it[1], it[2]
+                    if abs(p1.x - p2.x) < 1.5 and min(p1.y, p2.y) <= band.y1 and max(p1.y, p2.y) >= band.y0:
+                        if p1.x > x0 + 1:
+                            limit = min(limit, p1.x)
+                elif it[0] in ("re", "qu"):
+                    r = pymupdf.Rect(it[1].rect if it[0] == "qu" else it[1])
+                    if r.y0 <= band.y1 and r.y1 >= band.y0:
+                        for edge in (r.x0, r.x1):
+                            if edge > x0 + 1:
+                                limit = min(limit, edge)
+        return max(bbox.width, limit - x0 - 1.5)
+
+    @staticmethod
+    def text_width(font: ResolvedFont, text: str, size: float) -> float:
+        try:
+            return font.pymupdf_font().text_length(text, fontsize=size)
+        except Exception:
+            return len(text) * size * 0.5
+
+    def fit_size(self, page_no, span, text, font, size) -> tuple[float, float, float]:
+        """(tamanho ajustado, largura necessária, largura disponível)."""
+        need = self.text_width(font, text, size)
+        avail = self.available_width(page_no, span)
+        if need <= avail or need <= 0:
+            return size, need, avail
+        return max(2.0, round(size * avail / need, 1)), need, avail
+
+    def collisions(self, page_no: int, rect) -> int:
+        """Quantos textos/desenhos existentes ficariam sob o retângulo informado."""
+        page = self.doc[page_no]
+        rect = pymupdf.Rect(rect)
+        n = sum(1 for w in page.get_text("words") if pymupdf.Rect(w[:4]).intersects(rect))
+        try:
+            n += sum(1 for d in page.get_drawings() if pymupdf.Rect(d["rect"]).intersects(rect)
+                     and pymupdf.Rect(d["rect"]).get_area() < rect.get_area() * 4)
+        except Exception:
+            pass
+        return n
+
+    def replace_text(self, page_no: int, span: dict, new_text: str, font: ResolvedFont,
+                     size: float, color, fit=True) -> float:
+        """Remove o trecho original e escreve o novo com a fonte reconhecida, sem apagar
+        linhas, tabelas, marcações ou textos vizinhos. Retorna o tamanho de fonte usado."""
+        new_text = " ".join(new_text.split("\n")).rstrip()
+        if fit:
+            size = self.fit_size(page_no, span, new_text, font, size)[0]
         self.checkpoint(f"Editou texto na página {page_no + 1}")
         page = self.doc[page_no]
-        rect = pymupdf.Rect(bbox)
-        page.add_redact_annot(rect, fill=False)
+        page.add_redact_annot(self._text_band(span), fill=False)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
-                              graphics=pymupdf.PDF_REDACT_LINE_ART_NONE)
-        self._write_text(page, origin, new_text, font, size, color, direction)
+                              graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                              text=pymupdf.PDF_REDACT_TEXT_REMOVE)
+        if new_text:
+            self._write_text(page, span["origin"], new_text, font, size, color, span.get("dir", (1, 0)))
+        return size
 
     def add_text(self, page_no: int, origin, text: str, font: ResolvedFont, size: float, color):
         self.checkpoint(f"Adicionou texto na página {page_no + 1}")
         self._write_text(self.doc[page_no], origin, text, font, size, color)
+
+    def text_rect(self, origin, text, font, size) -> pymupdf.Rect:
+        lines = text.split("\n") or [""]
+        w = max(self.text_width(font, ln, size) for ln in lines)
+        x, y = origin
+        return pymupdf.Rect(x, y - size * 0.9, x + w, y + size * 1.2 * (len(lines) - 1) + size * 0.25)
 
     @staticmethod
     def _write_text(page, origin, text, font: ResolvedFont, size, color, direction=(1, 0)):
@@ -199,7 +289,9 @@ class PdfDocument:
             (round(direction[0]), round(direction[1])), 0)
         kw = dict(fontsize=size, color=color, rotate=rotate)
         if font.fontbuffer or font.fontfile:
-            name = "VtF" + str(abs(hash(font.label)) % 100000)
+            # nome estável por fonte (o hash() do Python muda a cada execução)
+            data = font.fontbuffer or font.fontfile.encode()
+            name = "Vt" + format(zlib.crc32(data[:65536]) & 0xFFFFFFFF, "x")
             page.insert_font(fontname=name, fontbuffer=font.fontbuffer, fontfile=font.fontfile)
             kw["fontname"] = name
         else:
@@ -224,7 +316,8 @@ class PdfDocument:
         self.checkpoint(f"Apagou área na página {page_no + 1}")
         page = self.doc[page_no]
         page.add_redact_annot(rect, fill=(1, 1, 1))
-        page.apply_redactions()
+        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
+                              graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED)
 
     def add_note(self, page_no, point, text):
         self.checkpoint(f"Adicionou nota na página {page_no + 1}")

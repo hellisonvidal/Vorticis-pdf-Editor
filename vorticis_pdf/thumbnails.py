@@ -6,6 +6,7 @@ from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListView, QListWidget, QListWidgetItem, QMenu
 
+from .tasks import PDF_LOCK
 from .viewer import pixmap_to_qimage
 
 THUMB_MIN, THUMB_MAX = 70, 420
@@ -42,10 +43,10 @@ class ThumbList(QListWidget):
         self.itemDoubleClicked.connect(lambda it: self.pageActivated.emit(self.row(it)))
         self.itemClicked.connect(lambda it: self.pageActivated.emit(self.row(it)))
         self.setStyleSheet("""
-            QListWidget{background:#2f3237;color:#e8e8e8;border:none}
-            QListWidget::item{border-radius:6px;padding:4px}
-            QListWidget::item:selected{background:#d6232d;color:white}
-            QListWidget::item:hover:!selected{background:#454950}""")
+            QListWidget{background:#262a31;color:#c9ced6;border:none;border-radius:0}
+            QListWidget::item{border-radius:10px;padding:6px;margin:2px}
+            QListWidget::item:selected{background:rgba(214,35,45,.85);color:white}
+            QListWidget::item:hover:!selected{background:#343a43}""")
         self._timer = QTimer(self, singleShot=True, interval=0)
         self._timer.timeout.connect(self._render_batch)
         self._apply_size()
@@ -104,6 +105,15 @@ class ThumbList(QListWidget):
     def _render_batch(self):
         if not self.doc:
             return
+        if not PDF_LOCK.acquire(blocking=False):  # tarefa em segundo plano usando o PyMuPDF
+            QTimer.singleShot(150, self._timer.start)
+            return
+        try:
+            self._render_batch_locked()
+        finally:
+            PDF_LOCK.release()
+
+    def _render_batch_locked(self):
         # renderiza primeiro as miniaturas visíveis
         vis = self.viewport().rect()
         self._queue.sort(key=lambda r: 0 if r < self.count() and
@@ -123,7 +133,10 @@ class ThumbList(QListWidget):
                 img.setDevicePixelRatio(self.devicePixelRatioF())
                 pm = QPixmap.fromImage(img)
                 self._cache[key] = pm
-            self.item(i).setIcon(QIcon(pm))
+            ic = QIcon()
+            ic.addPixmap(pm, QIcon.Normal)
+            ic.addPixmap(pm, QIcon.Selected)  # sem tingir a página ao selecionar
+            self.item(i).setIcon(ic)
         if self._queue:
             self._timer.start()
 

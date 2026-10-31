@@ -1,9 +1,13 @@
 ; Instalador do Vorticis PDF Editor (Inno Setup 6 — gratuito: https://jrsoftware.org)
 ; Compile depois do PyInstaller:  iscc installer\vorticis.iss
+;
+; Instalação sem travas: não exige administrador (instala para o usuário atual em
+; %LOCALAPPDATA%\Programs), não altera configurações de segurança do Windows e funciona
+; em qualquer Windows 10/11 de 64 bits. Silenciosa: VorticisPDF-Setup.exe /VERYSILENT
 
 #define AppName "Vorticis PDF Editor"
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 #define AppExe "VorticisPDF.exe"
 
@@ -11,20 +15,33 @@
 AppId={{6E3C2B1A-7F4D-4C8E-9A51-0B7D2E5F9C11}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion}
 AppPublisher=Vorticis
+AppComments=Desenvolvido integralmente com IA. Gratuito para sempre.
+VersionInfoVersion={#AppVersion}
+VersionInfoDescription={#AppName} - Instalador
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
+DisableProgramGroupPage=yes
+DisableDirPage=auto
 UninstallDisplayIcon={app}\{#AppExe}
+UninstallDisplayName={#AppName}
 OutputDir=Output
-OutputBaseFilename=VorticisPDF-Setup-{#AppVersion}
+OutputBaseFilename=VorticisPDF-Instalador-{#AppVersion}
 SetupIconFile=..\vorticis_pdf\resources\icon.ico
-Compression=lzma2/ultra
+LicenseFile=..\LICENSE
+Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+MinVersion=10.0
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; instala sem pedir administrador (pode escolher "para todos os usuários")
+; sem pedir administrador; o usuário pode escolher "para todos" se quiser
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+PrivilegesRequiredOverridesAllowed=dialog commandline
+UsedUserAreasWarning=no
+CloseApplications=yes
+RestartApplications=no
 ChangesAssociations=yes
 
 [Languages]
@@ -38,16 +55,19 @@ Name: "defaultpdf"; Description: "Usar o Vorticis como leitor de PDF padrão"; G
 [Files]
 Source: "..\dist\VorticisPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; remove arquivos de versões anteriores antes de copiar a nova
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{group}\Desinstalar {#AppName}"; Filename: "{uninstallexe}"
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
 Root: HKA; Subkey: "Software\Classes\.pdf"; ValueType: string; ValueName: ""; ValueData: "VorticisPDF.Document"; Flags: uninsdeletevalue; Tasks: defaultpdf
 
 [Run]
-Filename: "{app}\{#AppExe}"; Parameters: "--register-shell"; Flags: runhidden; Tasks: contextmenu
+Filename: "{app}\{#AppExe}"; Parameters: "--register-shell"; Flags: runhidden waituntilterminated; Tasks: contextmenu
 Filename: "{app}\{#AppExe}"; Description: "Abrir o {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

@@ -6,6 +6,8 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QScrollArea, QVBoxLayout, QWidget
 
+from .tasks import PDF_LOCK
+
 ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
 PAGE_GAP = 14
 
@@ -125,11 +127,13 @@ class PageWidget(QWidget):
             new = self.to_screen(span["bbox"]) if span else None
             if new != self.hover_rect:
                 self.hover_rect = new
+                self.view.spanHovered.emit(self.index, span)
                 self.update()
 
     def leaveEvent(self, _e):
         if self.hover_rect is not None:
             self.hover_rect = None
+            self.view.spanHovered.emit(self.index, None)
             self.update()
 
     def mouseReleaseEvent(self, e):
@@ -159,6 +163,7 @@ class PdfView(QScrollArea):
     addTextRequested = Signal(int, tuple)
     noteRequested = Signal(int, tuple)
     areaSelected = Signal(str, int, tuple)
+    spanHovered = Signal(int, object)  # página, trecho sob o cursor (ou None)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -180,7 +185,7 @@ class PdfView(QScrollArea):
         self.setWidgetResizable(False)
         self.setAlignment(Qt.AlignHCenter)
         self.setBackgroundRole(self.backgroundRole())
-        self.setStyleSheet("QScrollArea{background:#5b5f66;border:none} #pdfContainer{background:#5b5f66}")
+        self.setStyleSheet("QScrollArea{background:#3a3f47;border:none} #pdfContainer{background:#3a3f47}")
         self.container = QWidget()
         self.container.setObjectName("pdfContainer")
         self.layout_ = QVBoxLayout(self.container)
@@ -349,6 +354,17 @@ class PdfView(QScrollArea):
     def _render_next(self):
         if not self.doc or not self._render_queue:
             return
+        if not PDF_LOCK.acquire(blocking=False):  # tarefa em segundo plano usando o PyMuPDF
+            QTimer.singleShot(120, self._render_timer.start)
+            return
+        try:
+            self._render_one()
+        finally:
+            PDF_LOCK.release()
+        if self._render_queue:
+            self._render_timer.start()
+
+    def _render_one(self):
         # prioriza páginas visíveis
         top = self.verticalScrollBar().value()
         bottom = top + self.viewport().height()
@@ -361,8 +377,6 @@ class PdfView(QScrollArea):
             if visible and w.image is None:
                 w.image = render_page(self.doc[i], self.zoom, self.devicePixelRatioF())
                 w.update()
-        if self._render_queue:
-            self._render_timer.start()
 
     # ---------------- texto ----------------
     def spans(self, index):
@@ -438,6 +452,8 @@ class PdfView(QScrollArea):
     # ---------------- ferramenta ----------------
     def set_tool(self, tool):
         self.tool = tool
+        if tool != EDIT_TEXT:
+            self.spanHovered.emit(self.current, None)
         cursors = {SELECT: Qt.IBeamCursor, EDIT_TEXT: Qt.PointingHandCursor,
                    ADD_TEXT: Qt.CrossCursor, PAN: Qt.OpenHandCursor, NOTE: Qt.CrossCursor}
         cur = QCursor(cursors.get(tool, Qt.CrossCursor))

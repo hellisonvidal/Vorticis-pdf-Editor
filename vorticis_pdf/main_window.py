@@ -5,27 +5,39 @@ import os
 from pathlib import Path
 
 import pymupdf
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QSlider, QSpinBox, QSplitter, QToolBar, QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSlider,
+    QSpinBox, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import APP_NAME
 from . import converters as conv
 from . import shell_integration as shell
 from . import viewer as V
-from .config import now_str, resource_path
+from .config import log_path, now_str, resource_path, settings
 from .dialogs import (
     ALL_SUPPORTED, PDF_FILTER, ConvertDialog, HistoryDialog, PagePreviewDialog,
-    PropertiesDialog, SaveInfoDialog, SplitDialog, TextDialog, about, run_task,
+    PropertiesDialog, SaveInfoDialog, SplitDialog, TextDialog, about, open_folder,
 )
 from .document import PdfDocument, split_document
+from .fonts import catalog, strip_subset
+from .icons import icon
 from .printing import print_document
+from .tasks import run_task
 from .thumbnails import ThumbList
 
 MAX_RECENT = 12
+
+
+def _sep():
+    w = QWidget()
+    w.setObjectName("Sep")
+    w.setFixedWidth(1)
+    w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+    return w
 
 
 class MainWindow(QMainWindow):
@@ -35,20 +47,26 @@ class MainWindow(QMainWindow):
         self.pdoc: PdfDocument | None = None
         self.save_password: str | None = None
         self.search_index = 0
-        self.settings = QSettings("Vorticis", "PDFEditor")
+        self.settings = settings()
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setAcceptDrops(True)
-        self.resize(1320, 880)
+        self.resize(1360, 900)
 
         self.view = V.PdfView()
         self.thumbs = ThumbList()
         self._build_thumb_panel()
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setHandleWidth(1)
         self.splitter.addWidget(self.thumb_panel)
         self.splitter.addWidget(self.view)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([230, 1090])
-        self.setCentralWidget(self.splitter)
+        self.splitter.setSizes([240, 1100])
+
+        self.stack = QStackedWidget()
+        self.welcome = self._build_welcome()
+        self.stack.addWidget(self.welcome)
+        self.stack.addWidget(self.splitter)
+        self.setCentralWidget(self.stack)
 
         self._build_actions()
         self._build_menus()
@@ -67,28 +85,130 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         bar = QWidget()
-        bar.setStyleSheet("background:#24272b;color:#ddd")
+        bar.setObjectName("ThumbHeader")
+        bar.setAttribute(Qt.WA_StyledBackground, True)
         h = QHBoxLayout(bar)
-        h.setContentsMargins(8, 4, 8, 4)
+        h.setContentsMargins(12, 8, 12, 8)
         self.thumb_title = QLabel("Páginas")
         h.addWidget(self.thumb_title)
         h.addStretch()
-        h.addWidget(QLabel("🔍"))
+        zl = QLabel()
+        zl.setPixmap(icon("zoom_in", "#aeb4bd").pixmap(16, 16))
+        h.addWidget(zl)
         self.thumb_slider = QSlider(Qt.Horizontal, minimum=70, maximum=420, value=self.thumbs.thumb)
-        self.thumb_slider.setFixedWidth(110)
+        self.thumb_slider.setFixedWidth(100)
         self.thumb_slider.setToolTip("Tamanho das miniaturas (Ctrl + roda do mouse)")
         h.addWidget(self.thumb_slider)
         lay.addWidget(bar)
         lay.addWidget(self.thumbs, 1)
 
-    def _act(self, text, slot, shortcut=None, icon=None, tip=None, checkable=False):
+    def _build_welcome(self):
+        page = QWidget()
+        page.setObjectName("Welcome")
+        page.setAttribute(Qt.WA_StyledBackground, True)
+        outer = QVBoxLayout(page)
+        outer.addStretch()
+        row = QHBoxLayout()
+        row.addStretch()
+        card = QWidget()
+        card.setObjectName("WelcomeCard")
+        card.setAttribute(Qt.WA_StyledBackground, True)
+        card.setMaximumWidth(860)
+        cl = QGridLayout(card)
+        cl.setContentsMargins(36, 32, 36, 32)
+        cl.setHorizontalSpacing(28)
+        cl.setVerticalSpacing(10)
+
+        head = QHBoxLayout()
+        logo = QLabel()
+        logo.setPixmap(QPixmap(resource_path("logo.png")).scaled(72, 72, Qt.KeepAspectRatio,
+                                                                  Qt.SmoothTransformation))
+        head.addWidget(logo)
+        tl = QVBoxLayout()
+        t = QLabel(APP_NAME)
+        t.setObjectName("WelcomeTitle")
+        s = QLabel("Visualize, edite, organize e converta PDFs — gratuito, sempre.")
+        s.setObjectName("WelcomeSub")
+        tl.addWidget(t)
+        tl.addWidget(s)
+        head.addLayout(tl)
+        head.addStretch()
+        cl.addLayout(head, 0, 0, 1, 2)
+
+        actions = QVBoxLayout()
+        actions.setSpacing(8)
+        for ic, text, sub, fn in (
+            ("open", "Abrir PDF", "ou arraste um arquivo para esta janela", self.open_dialog),
+            ("merge", "Unir PDFs", "junte vários arquivos em um só", lambda: self.ctrl.merge([])),
+            ("split", "Separar PDF", "por páginas, intervalos ou a cada N", lambda: self.ctrl.split([])),
+            ("organize", "Organizar páginas", "reordene, gire e exclua visualmente", self._organize_from_welcome),
+            ("convert", "Converter arquivos", "Word, Excel, PowerPoint, imagens ↔ PDF", lambda: self.ctrl.convert([])),
+        ):
+            b = QPushButton(icon(ic, "#d6232d"), f"  {text}\n  {sub}")
+            b.setObjectName("BigAction")
+            b.setIconSize(QSize(26, 26))
+            b.setCursor(Qt.PointingHandCursor)
+            b.setMinimumWidth(330)
+            b.clicked.connect(fn)
+            actions.addWidget(b)
+        actions.addStretch()
+        cl.addLayout(actions, 1, 0)
+
+        rl = QVBoxLayout()
+        rt = QLabel("<b>Recentes</b>")
+        rl.addWidget(rt)
+        self.recent_list = QListWidget()
+        self.recent_list.setObjectName("RecentList")
+        self.recent_list.setMinimumWidth(360)
+        self.recent_list.itemActivated.connect(lambda it: self.ctrl.open_files([it.data(Qt.UserRole)], self))
+        self.recent_list.itemClicked.connect(lambda it: self.ctrl.open_files([it.data(Qt.UserRole)], self))
+        rl.addWidget(self.recent_list, 1)
+        badge = QLabel("🤖 Feito integralmente com IA  •  💚 Sempre gratuito")
+        badge.setObjectName("Badge")
+        badge.setAlignment(Qt.AlignCenter)
+        rl.addWidget(badge)
+        cl.addLayout(rl, 1, 1)
+        row.addWidget(card, 1)
+        row.addStretch()
+        outer.addLayout(row)
+        outer.addStretch()
+        return page
+
+    def _fill_recent_list(self):
+        self.recent_list.clear()
+        rec = self.settings.value("recent", []) or []
+        if isinstance(rec, str):
+            rec = [rec]
+        for p in rec:
+            if os.path.isfile(p):
+                parent = str(Path(p).parent)
+                if len(parent) > 48:
+                    parent = "…" + parent[-47:]
+                it = QListWidgetItem(icon("pages", "#6b7280"), f"{Path(p).name}\n{parent}")
+                it.setData(Qt.UserRole, p)
+                it.setToolTip(p)
+                self.recent_list.addItem(it)
+        if not self.recent_list.count():
+            it = QListWidgetItem("Nenhum arquivo aberto recentemente")
+            it.setFlags(Qt.NoItemFlags)
+            self.recent_list.addItem(it)
+
+    def _organize_from_welcome(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Escolha os arquivos para organizar", "",
+                                                PDF_FILTER + ";;" + ALL_SUPPORTED)
+        if files:
+            self.ctrl.organize(files)
+
+    def _act(self, text, slot, shortcut=None, ic=None, tip=None, checkable=False):
         a = QAction(text, self)
         if shortcut:
             a.setShortcut(QKeySequence(shortcut))
-        if icon:
-            a.setIconText(icon + " " + text)
+        if ic:
+            a.setIcon(icon(ic))
+        sc = a.shortcut().toString(QKeySequence.NativeText)
+        a.setToolTip(f"<b>{text.rstrip('.')}</b>" + (f"  <span style='color:#aab'>({sc})</span>" if sc else "")
+                     + (f"<br>{tip}" if tip else ""))
         if tip:
-            a.setToolTip(tip)
             a.setStatusTip(tip)
         a.setCheckable(checkable)
         a.triggered.connect(slot)
@@ -96,69 +216,75 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self):
         A = self._act
-        self.a_open = A("Abrir...", self.open_dialog, QKeySequence.Open, "📂", "Abrir PDF ou outro arquivo")
-        self.a_save = A("Salvar", self.save, QKeySequence.Save, "💾", "Salvar alterações (Ctrl+S)")
-        self.a_save_as = A("Salvar como...", self.save_as, QKeySequence.SaveAs, "💾")
-        self.a_print = A("Imprimir...", lambda: self.print_pages(None), QKeySequence.Print, "🖨",
+        self.a_open = A("Abrir...", self.open_dialog, QKeySequence.Open, "open", "Abrir PDF ou outro arquivo")
+        self.a_save = A("Salvar", self.save, QKeySequence.Save, "save", "Salvar as alterações")
+        self.a_save_as = A("Salvar como...", self.save_as, QKeySequence.SaveAs, "save_as")
+        self.a_print = A("Imprimir...", lambda: self.print_pages(None), QKeySequence.Print, "print",
                          "Imprimir na ordem atual das páginas, com pré-visualização")
-        self.a_props = A("Propriedades e fontes...", self.properties, "Ctrl+I", "ℹ")
-        self.a_history = A("Histórico de salvamentos...", lambda: HistoryDialog(self).exec())
+        self.a_props = A("Propriedades e fontes...", self.properties, "Ctrl+I", "info",
+                         "Metadados, fontes do documento e senha")
+        self.a_history = A("Histórico de salvamentos...", lambda: HistoryDialog(self).exec(), None, "history")
         self.a_close = A("Fechar", self.close, QKeySequence.Close)
         self.a_quit = A("Sair", self.ctrl.quit, QKeySequence.Quit)
         self.a_new_win = A("Nova janela", lambda: self.ctrl.new_window(), "Ctrl+N")
 
-        self.a_undo = A("Desfazer", self.undo, QKeySequence.Undo, "↶")
-        self.a_redo = A("Refazer", self.redo, QKeySequence.Redo, "↷")
+        self.a_undo = A("Desfazer", self.undo, QKeySequence.Undo, "undo")
+        self.a_redo = A("Refazer", self.redo, QKeySequence.Redo, "redo")
         self.a_copy = A("Copiar texto selecionado", self.copy, QKeySequence.Copy)
         self.a_find = A("Localizar...", lambda: (self.search_box.setFocus(), self.search_box.selectAll()),
-                        QKeySequence.Find)
+                        QKeySequence.Find, "search")
 
-        self.a_zoom_in = A("Aumentar zoom", self.view.zoom_in, QKeySequence.ZoomIn, "➕")
-        self.a_zoom_out = A("Diminuir zoom", self.view.zoom_out, QKeySequence.ZoomOut, "➖")
-        self.a_fit_w = A("Ajustar à largura", lambda: self.view.set_fit("width"), "Ctrl+2", "↔")
-        self.a_fit_p = A("Página inteira", lambda: self.view.set_fit("page"), "Ctrl+0", "⛶")
+        self.a_zoom_in = A("Aumentar zoom", self.view.zoom_in, QKeySequence.ZoomIn, "zoom_in")
+        self.a_zoom_out = A("Diminuir zoom", self.view.zoom_out, QKeySequence.ZoomOut, "zoom_out")
+        self.a_fit_w = A("Ajustar à largura", lambda: self.view.set_fit("width"), "Ctrl+2", "fit_width")
+        self.a_fit_p = A("Página inteira", lambda: self.view.set_fit("page"), "Ctrl+0", "fit_page")
         self.a_zoom100 = A("Tamanho real (100%)", lambda: self.view.set_zoom(1.0), "Ctrl+1")
-        self.a_organize = A("Organizar páginas", self.toggle_organize, "F6", "▦",
-                            "Modo organizar: miniaturas grandes, arraste para reordenar", checkable=True)
-        self.a_thumbs = A("Painel de miniaturas", self.toggle_thumbs, "F4", checkable=True)
+        self.a_organize = A("Organizar páginas", self.toggle_organize, "F6", "organize",
+                            "Miniaturas grandes: arraste para reordenar, botão direito para opções",
+                            checkable=True)
+        self.a_thumbs = A("Painel de miniaturas", self.toggle_thumbs, "F4", "pages", checkable=True)
         self.a_thumbs.setChecked(True)
 
-        self.a_rot_r = A("Girar à direita", lambda: self.page_action("rot_r"), "Ctrl+R", "↻")
-        self.a_rot_l = A("Girar à esquerda", lambda: self.page_action("rot_l"), "Ctrl+Shift+R", "↺")
-        self.a_del = A("Excluir páginas", lambda: self.page_action("delete"), None, "🗑")
+        self.a_rot_r = A("Girar à direita", lambda: self.page_action("rot_r"), "Ctrl+R", "rotate_right")
+        self.a_rot_l = A("Girar à esquerda", lambda: self.page_action("rot_l"), "Ctrl+Shift+R", "rotate_left")
+        self.a_del = A("Excluir páginas", lambda: self.page_action("delete"), None, "trash")
         self.a_dup = A("Duplicar páginas", lambda: self.page_action("duplicate"), "Ctrl+D")
         self.a_blank = A("Inserir página em branco", lambda: self.page_action("blank"))
         self.a_ins = A("Inserir arquivo...", lambda: self.page_action("insert_file"), "Ctrl+Shift+I")
         self.a_extract = A("Extrair páginas selecionadas...", lambda: self.page_action("extract"), "Ctrl+E")
-        self.a_split = A("Separar documento...", self.split_current, None, "✂")
+        self.a_split = A("Separar documento...", self.split_current, None, "split",
+                         "Dividir este PDF em vários arquivos")
         self.a_reverse = A("Inverter ordem de todas as páginas", self.reverse_all)
 
-        self.a_merge = A("Unir PDFs...", lambda: self.ctrl.merge([]), "Ctrl+M", "⧉",
+        self.a_merge = A("Unir PDFs...", lambda: self.ctrl.merge([]), "Ctrl+M", "merge",
                          "Unir vários arquivos em um único PDF")
-        self.a_split_files = A("Separar arquivos PDF...", lambda: self.ctrl.split([]))
-        self.a_convert = A("Converter arquivos...", lambda: self.ctrl.convert([]), "Ctrl+Shift+C", "⇄",
+        self.a_split_files = A("Separar arquivos PDF...", lambda: self.ctrl.split([]), None, "split")
+        self.a_convert = A("Converter arquivos...", lambda: self.ctrl.convert([]), "Ctrl+Shift+C", "convert",
                            "Converter Word, Excel, PowerPoint, imagens ↔ PDF")
-        self.a_export = A("Exportar este PDF para...", self.export_current)
+        self.a_export = A("Exportar este PDF para...", self.export_current, None, "convert")
         self.a_shell_on = A("Adicionar ao menu do botão direito do Windows", self.shell_register)
         self.a_shell_off = A("Remover do menu do botão direito", self.shell_unregister)
-        self.a_about = A("Sobre o Vorticis PDF Editor", lambda: about(self))
+        self.a_log = A("Abrir registro de erros", lambda: open_folder(str(log_path())))
+        self.a_about = A("Sobre o Vorticis PDF Editor", lambda: about(self), "F1", "info")
 
         # ferramentas (exclusivas)
         self.tool_group = QActionGroup(self)
         self.tool_actions = {}
-        for key, text, icon, sc, tip in (
-            (V.SELECT, "Selecionar", "⌶", "S", "Selecionar e copiar texto (arraste)"),
-            (V.PAN, "Mão", "✋", "H", "Arrastar a página"),
-            (V.EDIT_TEXT, "Editar texto", "✎", "E", "Clique em um texto para editá-lo (fonte reconhecida automaticamente)"),
-            (V.ADD_TEXT, "Adicionar texto", "T", "T", "Clique onde deseja inserir texto"),
-            (V.HIGHLIGHT, "Destacar", "🖍", "M", "Arraste sobre o texto para destacar"),
-            (V.RECT, "Retângulo", "▭", "R", "Desenhar um retângulo"),
-            (V.WHITEOUT, "Apagar área", "⌫", "W", "Remove definitivamente o conteúdo da área"),
-            (V.NOTE, "Nota", "🗨", "N", "Adicionar comentário"),
-            (V.IMAGE, "Imagem", "🖼", "I", "Arraste a área e escolha a imagem"),
-            (V.CROP, "Recortar", "⌗", "C", "Arraste a área visível da página"),
+        for key, text, ic, sc, tip in (
+            (V.SELECT, "Selecionar", "select", "S", "Selecionar e copiar texto (arraste)"),
+            (V.PAN, "Mão", "pan", "H", "Arrastar a página"),
+            (V.EDIT_TEXT, "Editar texto", "edit_text", "E",
+             "Passe o mouse para ver a fonte; clique para editar mantendo a fonte original"),
+            (V.ADD_TEXT, "Adicionar texto", "add_text", "T", "Clique onde deseja inserir texto"),
+            (V.HIGHLIGHT, "Destacar", "highlight", "M", "Arraste sobre o texto para destacar"),
+            (V.RECT, "Retângulo", "rect", "R", "Desenhar um retângulo"),
+            (V.WHITEOUT, "Apagar área", "whiteout", "W", "Cobre e remove o conteúdo da área"),
+            (V.NOTE, "Nota", "note", "N", "Adicionar comentário"),
+            (V.IMAGE, "Imagem", "image", "I", "Arraste a área e escolha a imagem"),
+            (V.CROP, "Recortar", "crop", "C", "Arraste a área visível da página"),
         ):
-            a = A(text, lambda _c=False, k=key: self.set_tool(k), sc, icon, tip, checkable=True)
+            a = A(text, lambda _c=False, k=key: self.set_tool(k), sc, ic, tip, checkable=True)
+            a.setIcon(icon(ic))
             self.tool_group.addAction(a)
             self.tool_actions[key] = a
         self.tool_actions[V.SELECT].setChecked(True)
@@ -194,73 +320,108 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addActions([self.a_shell_on, self.a_shell_off])
         m = mb.addMenu("Aj&uda")
-        m.addAction(self.a_about)
+        m.addActions([self.a_about, self.a_log])
 
     def _build_toolbars(self):
         tb = QToolBar("Principal")
-        tb.setObjectName("main")
+        tb.setObjectName("HeaderBar")
         tb.setMovable(False)
-        tb.setIconSize(QSize(18, 18))
-        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.addToolBar(tb)
+        tb.setFloatable(False)
+        tb.setIconSize(QSize(20, 20))
+        tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        tb.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.addToolBar(Qt.TopToolBarArea, tb)
         tb.addActions([self.a_open, self.a_save, self.a_print])
-        tb.addSeparator()
+        tb.addWidget(_sep())
         tb.addActions([self.a_undo, self.a_redo])
-        tb.addSeparator()
+        tb.addWidget(_sep())
         tb.addAction(self.a_zoom_out)
         self.zoom_combo = QComboBox()
         self.zoom_combo.setEditable(True)
-        self.zoom_combo.setFixedWidth(92)
+        self.zoom_combo.setFixedWidth(96)
         for z in (25, 50, 75, 100, 125, 150, 200, 300, 400):
             self.zoom_combo.addItem(f"{z}%")
         self.zoom_combo.addItems(["Largura", "Página"])
+        self.zoom_combo.setToolTip("Zoom (Ctrl + roda do mouse)")
         tb.addWidget(self.zoom_combo)
-        tb.addAction(self.a_zoom_in)
-        tb.addAction(self.a_fit_w)
-        tb.addAction(self.a_fit_p)
-        tb.addSeparator()
+        tb.addActions([self.a_zoom_in, self.a_fit_w, self.a_fit_p])
+        tb.addWidget(_sep())
         self.page_spin = QSpinBox(minimum=1, maximum=1)
-        self.page_spin.setFixedWidth(70)
+        self.page_spin.setFixedWidth(78)
         self.page_spin.setKeyboardTracking(False)
+        self.page_spin.setAlignment(Qt.AlignCenter)
+        self.page_spin.setToolTip("Ir para a página")
         tb.addWidget(self.page_spin)
         self.page_total = QLabel(" / 0 ")
+        self.page_total.setStyleSheet("color:#6b7280;padding-right:4px")
         tb.addWidget(self.page_total)
-        tb.addSeparator()
-        tb.addActions([self.a_organize, self.a_rot_l, self.a_rot_r, self.a_merge, self.a_split,
-                       self.a_convert])
-        tb.addSeparator()
+        tb.addWidget(_sep())
+        tb.addActions([self.a_organize, self.a_rot_l, self.a_rot_r])
+        tb.addWidget(_sep())
+        tb.addActions([self.a_split, self.a_convert])
+        merge_btn = QToolButton()
+        merge_btn.setObjectName("Primary")
+        merge_btn.setDefaultAction(self.a_merge)
+        merge_btn.setIcon(icon("merge", "#ffffff"))
+        merge_btn.setText("Unir PDFs")
+        merge_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        tb.addWidget(merge_btn)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("🔎 Localizar (Enter = próximo)")
-        self.search_box.setFixedWidth(220)
+        self.search_box.setObjectName("SearchBox")
+        self.search_box.setPlaceholderText("Localizar no documento…")
+        self.search_box.addAction(icon("search", "#8a919c"), QLineEdit.LeadingPosition)
+        self.search_box.setFixedWidth(240)
         self.search_box.setClearButtonEnabled(True)
         tb.addWidget(self.search_box)
         self.search_lbl = QLabel("")
+        self.search_lbl.setStyleSheet("color:#6b7280;padding:0 6px")
         tb.addWidget(self.search_lbl)
+        tb.addAction(self.a_about)
 
-        tools = QToolBar("Ferramentas de edição")
-        tools.setObjectName("tools")
-        tools.setMovable(False)
-        tools.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.addToolBarBreak()
-        self.addToolBar(tools)
-        tools.addWidget(QLabel("  Ferramentas: "))
-        tools.addActions(list(self.tool_actions.values()))
-        self.setStyleSheet("""
-            QToolBar{spacing:3px;padding:3px;background:#f4f5f7;border-bottom:1px solid #ddd}
-            QToolButton{padding:4px 7px;border-radius:5px}
-            QToolButton:hover{background:#e3e6ea}
-            QToolButton:checked{background:#d6232d;color:white}
-            QStatusBar{background:#f4f5f7}""")
+        rail = QToolBar("Ferramentas")
+        rail.setObjectName("ToolRail")
+        rail.setMovable(False)
+        rail.setFloatable(False)
+        rail.setOrientation(Qt.Vertical)
+        rail.setIconSize(QSize(22, 22))
+        rail.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        rail.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.addToolBar(Qt.LeftToolBarArea, rail)
+        for key, a in self.tool_actions.items():
+            rail.addAction(a)
+            if key in (V.PAN, V.ADD_TEXT, V.NOTE):
+                rail.addWidget(self._rail_sep())
+        self.rail = rail
+
+    @staticmethod
+    def _rail_sep():
+        w = QWidget()
+        w.setFixedHeight(9)
+        w.setStyleSheet("border-bottom:1px solid #e3e6eb;margin:0 12px 4px 12px")
+        return w
 
     def _build_status(self):
         sb = self.statusBar()
+        sb.setSizeGripEnabled(False)
         self.st_page = QLabel()
         self.st_zoom = QLabel()
+        self.st_font = QLabel()
+        self.st_font.setObjectName("FontBadge")
+        self.st_font.hide()
         self.st_saved = QLabel()
-        self.st_saved.setStyleSheet("color:#1b8a3a")
+        self.st_saved.setObjectName("SavedBadge")
         sb.addWidget(self.st_page)
         sb.addWidget(self.st_zoom)
+        sb.addWidget(self.st_font)
         sb.addPermanentWidget(self.st_saved)
+
+    def _set_saved_badge(self, text, dirty=False):
+        self.st_saved.setObjectName("DirtyBadge" if dirty else "SavedBadge")
+        self.st_saved.setStyleSheet("color:#b26a00" if dirty else "color:#1b8a3a")
+        self.st_saved.setText(text)
 
     def _connect(self):
         self.view.zoomChanged.connect(self._on_zoom)
@@ -269,7 +430,9 @@ class MainWindow(QMainWindow):
         self.view.addTextRequested.connect(self.add_text)
         self.view.noteRequested.connect(self.add_note)
         self.view.areaSelected.connect(self.area_tool)
-        self.thumbs.pageActivated.connect(lambda i: (self.view.set_current_page(i)) if not self.a_organize.isChecked() else None)
+        self.view.spanHovered.connect(self._show_hover_font)
+        self.thumbs.pageActivated.connect(
+            lambda i: self.view.set_current_page(i) if not self.a_organize.isChecked() else None)
         self.thumbs.pagesMoved.connect(self.move_pages)
         self.thumbs.filesDropped.connect(self.insert_files_at)
         self.thumbs.action.connect(self.thumb_action)
@@ -285,6 +448,24 @@ class MainWindow(QMainWindow):
         self.search_box.textChanged.connect(lambda _t: setattr(self, "_search_dirty", True))
         self._search_dirty = True
 
+    def _show_hover_font(self, page_no, span):
+        """Mostra na barra de status a fonte do texto sob o cursor (ferramenta Editar texto)."""
+        if not span:
+            self.st_font.hide()
+            return
+        name = strip_subset(span["font"])
+        sf, exact = catalog.match(span["font"], bool(span["flags"] & 16), bool(span["flags"] & 2))
+        if sf and exact:
+            status = "instalada ✔"
+        elif sf:
+            status = f"equivalente: {sf.label}"
+        else:
+            status = "embutida no PDF" if any(strip_subset(f[3]) == name and f[1] not in ("n/a", "")
+                                              for f in self.pdoc.doc[page_no].get_fonts(full=True)) \
+                else "usará fonte padrão"
+        self.st_font.setText(f"Aa  {name} • {span['size']:.1f} pt • {status}")
+        self.st_font.show()
+
     # ================================================================== documento
     def set_document(self, pdoc: PdfDocument | None):
         self.pdoc = pdoc
@@ -297,6 +478,11 @@ class MainWindow(QMainWindow):
                   self.a_extract, self.a_split, self.a_reverse, self.a_organize):
             a.setEnabled(has)
         self.st_saved.setText("")
+        self.stack.setCurrentIndex(1 if has else 0)
+        for w in (self.rail,):
+            w.setVisible(has)
+        if not has:
+            self._fill_recent_list()
         self._update_state()
         if pdoc and pdoc.path:
             self._add_recent(pdoc.path)
@@ -357,8 +543,7 @@ class MainWindow(QMainWindow):
         self.a_undo.setToolTip("Desfazer: " + (p._undo[-1][1] if p._undo else ""))
         self._on_page(self.view.current)
         if p.modified:
-            self.st_saved.setStyleSheet("color:#b26a00")
-            self.st_saved.setText(f"● {len(p.edits)} alteração(ões) não salva(s)")
+            self._set_saved_badge(f"● {len(p.edits)} alteração(ões) não salva(s)", dirty=True)
 
     def _on_zoom(self, z):
         self.st_zoom.setText(f"Zoom: {z * 100:.0f}%")
@@ -437,8 +622,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, APP_NAME, f"Erro ao salvar:\n{e}")
             return False
         self._add_recent(path)
-        self.st_saved.setStyleSheet("color:#1b8a3a")
-        self.st_saved.setText(f"✔ Salvo às {now_str()[-8:]} — {info['tamanho_atual']} — {path}")
+        self._set_saved_badge(f"✔ Salvo às {now_str()[-8:]} • {info['tamanho_atual']} • {path}")
         self._update_state()
         if self.settings.value("show_save_info", True, type=bool):
             SaveInfoDialog(self, info).exec()
@@ -464,7 +648,7 @@ class MainWindow(QMainWindow):
         if isinstance(rec, str):
             rec = [rec]
         for p in rec:
-            if os.path.exists(p):
+            if os.path.isfile(p):
                 self.recent_menu.addAction(p, lambda p=p: self.ctrl.open_files([p], self))
         if not self.recent_menu.actions():
             self.recent_menu.addAction("(vazio)").setEnabled(False)
@@ -513,23 +697,23 @@ class MainWindow(QMainWindow):
             self.toggle_organize()
 
     def edit_text(self, page_no, span):
-        dlg = TextDialog(self, self.pdoc.doc, page_no, span)
+        dlg = TextDialog(self, self.pdoc, page_no, span)
         if not dlg.exec():
             return
-        text, font, size, color = dlg.values()
+        text, font, size, color, fit = dlg.values()
         try:
-            self.pdoc.replace_text(page_no, span["bbox"], span["origin"], text, font, size, color,
-                                   span.get("dir", (1, 0)))
+            used = self.pdoc.replace_text(page_no, span, text, font, size, color, fit=fit)
         except Exception as e:
             QMessageBox.critical(self, APP_NAME, f"Não foi possível editar o texto:\n{e}")
             return
         self.refresh(pages=[page_no])
-        self.statusBar().showMessage(f"Texto editado com a fonte: {font.label}", 4000)
+        extra = f" (ajustado para {used:.1f} pt)" if used < size - 0.05 else ""
+        self.statusBar().showMessage(f"Texto editado com a fonte {font.label}{extra}", 5000)
 
     def add_text(self, page_no, pt):
-        dlg = TextDialog(self, self.pdoc.doc, page_no, None)
+        dlg = TextDialog(self, self.pdoc, page_no, None, origin=pt)
         if dlg.exec():
-            text, font, size, color = dlg.values()
+            text, font, size, color, _fit = dlg.values()
             if text.strip():
                 self.pdoc.add_text(page_no, (pt[0], pt[1] + size * 0.8), text, font, size, color)
                 self.refresh(pages=[page_no])

@@ -8,12 +8,18 @@
 
 ## Download
 
-Na aba **[Releases](../../releases)** há dois downloads:
+Na aba **[Releases](../../releases)** há dois arquivos separados:
 
-* **`VorticisPDF-Setup-x.y.z.exe`**: instalador. Pode adicionar as opções ao menu do botão direito do Windows Explorer.
-* **`VorticisPDF-Portatil-x.y.z.zip`**: versão portátil. Basta descompactar e executar `VorticisPDF.exe`.
+| Arquivo | O que é |
+|---|---|
+| **`VorticisPDF-Instalador-x.y.z.exe`** | Instalador. Cria atalhos e pode adicionar o menu do botão direito. **Não pede senha de administrador**, porque instala para o usuário atual. |
+| **`VorticisPDF-Portatil-x.y.z.zip`** | Versão portátil, sem instalação. Descompacte e execute `VorticisPDF.exe`. Funciona até de um pendrive, e configurações, histórico e logs ficam na pasta `dados`, ao lado do programa. |
 
-A cada envio para a branch `main`, o GitHub Actions gera os dois arquivos automaticamente. Eles ficam na aba **Actions** › execução mais recente › *Artifacts*. Para publicar uma Release, crie uma tag `v1.0.0`.
+Requer Windows 10 ou 11 (64 bits). Nenhuma outra instalação é necessária, porque o Python e as bibliotecas já vão embutidos.
+
+O build automático testa cada versão num Windows limpo antes de publicá-la. O teste instala sem administrador, executa o autoteste (`VorticisPDF.exe --selftest`, que abre, edita, une, separa e converte), confere o menu do botão direito e desinstala. A versão portátil passa pelo mesmo autoteste.
+
+> **"O Windows protegeu o computador" (SmartScreen):** esse aviso aparece para qualquer programa novo sem certificado digital pago. Ele não indica problema no arquivo. Clique em **Mais informações › Executar assim mesmo**. Para conferir a integridade dos downloads, use o `SHA256SUMS.txt` publicado junto com cada versão. Projetos de código aberto podem obter assinatura gratuita pelo [SignPath Foundation](https://signpath.org), o que remove o aviso.
 
 ## Funcionalidades
 
@@ -26,7 +32,7 @@ A cada envio para a branch `main`, o GitHub Actions gera os dois arquivos automa
 ### Editar
 | Ferramenta | Atalho | O que faz |
 |---|---|---|
-| Editar texto | `E` | Clique num texto para trocá-lo. **A fonte original é reconhecida automaticamente** (veja abaixo) |
+| Editar texto | `E` | Passe o mouse sobre um texto para ver a fonte na barra de status e clique para editá-lo. **A fonte original é reconhecida e mantida** (veja abaixo) |
 | Adicionar texto | `T` | Insere texto em qualquer ponto, com qualquer fonte instalada |
 | Destacar | `M` | Marca-texto sobre as palavras |
 | Retângulo | `R` | Desenha um retângulo |
@@ -43,6 +49,13 @@ Ao editar um texto, o programa procura a fonte nesta ordem:
 2. a **mesma fonte instalada no Windows**, comparando nome PostScript, nome completo e família + estilo (`ABCDEF+Arial-BoldMT` é reconhecida como *Arial Bold*);
 3. uma **fonte equivalente**, como Arial ↔ Liberation Sans, Calibri ↔ Carlito ou Times ↔ Liberation Serif;
 4. as **fontes padrão do PDF** (Helvetica, Times, Courier), mantendo negrito, itálico, serifa e monoespaçamento.
+
+O editor de texto mostra a fonte detectada: nome, estilo, tamanho, cor, tipo e se está embutida. Também mostra a fonte que será usada e uma **prévia ao vivo nessa fonte**. Se algum caractere digitado não existir na fonte embutida (PDFs costumam embutir só os caracteres usados), o programa avisa e usa a mesma fonte instalada no computador.
+
+**O texto digitado não sobrescreve linhas e marcações:**
+* só os caracteres do trecho editado são removidos, e as linhas de texto vizinhas, bordas de tabela, sublinhados, retângulos e imagens permanecem intactos;
+* se o novo texto for maior que o espaço disponível (até o próximo texto, borda de célula, linha vertical ou margem), o tamanho da fonte é ajustado automaticamente para caber. Essa opção pode ser desligada;
+* ao adicionar texto num ponto já ocupado, o programa avisa antes de inserir.
 
 Todas as fontes instaladas entram na lista: `C:\Windows\Fonts`, as fontes do usuário e qualquer arquivo copiado para `%APPDATA%\Vorticis PDF Editor\fonts`. Também entram as 14 fontes padrão do PDF e as fontes CJK. A janela de edição mostra a fonte original e a fonte reconhecida, e você pode escolher outra. Em **Arquivo › Propriedades e fontes** aparece a lista das fontes do documento com a fonte correspondente no sistema.
 
@@ -93,6 +106,9 @@ VorticisPDF.exe --convert a.pdf          (PDF → Word/Excel/...)
 VorticisPDF.exe --to-pdf documento.docx  (Office/imagens → PDF)
 VorticisPDF.exe --register-shell | --unregister-shell
 ```
+
+### Diagnóstico de erros
+Se algo der errado, o programa mostra uma mensagem e continua aberto. Os detalhes, inclusive falhas internas, ficam em **Ajuda › Abrir registro de erros** (`vorticis_erros.log`).
 
 ## Compilar a partir do código-fonte
 

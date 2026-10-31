@@ -1,0 +1,8 @@
+Vorticis PDF Editor - edição portátil
+
+Este arquivo ativa o modo portátil: configurações, histórico de salvamentos,
+cache de fontes e registro de erros ficam na pasta "dados", ao lado do programa.
+Nada é gravado no computador (nem no registro do Windows).
+
+Pode ser executado de um pendrive, sem instalação e sem permissão de administrador.
+Apague este arquivo para usar o modo normal (dados em %APPDATA%).

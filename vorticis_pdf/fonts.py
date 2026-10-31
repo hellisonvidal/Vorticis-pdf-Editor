@@ -323,3 +323,62 @@ def all_font_labels():
             seen.add(f.label)
             labels.append(f.label)
     return labels
+
+
+# ---------------------------------------------------------------- informações para o usuário
+def missing_glyphs(font: ResolvedFont, text: str) -> list[str]:
+    """Caracteres do texto que a fonte não possui (seriam trocados por outra fonte)."""
+    try:
+        f = font.pymupdf_font()
+    except Exception:
+        return []
+    out = []
+    for c in dict.fromkeys(text):
+        if not c.isspace() and not f.has_glyph(ord(c)):
+            out.append(c)
+    return out
+
+
+def describe_span(doc, page, span) -> dict:
+    """Dados da fonte original de um trecho, para mostrar ao usuário."""
+    name = span.get("font", "")
+    flags = span.get("flags", 0)
+    fam, b, i = split_family_style(name)
+    info = {"nome": strip_subset(name), "subconjunto": bool(re.match(r"^[A-Z]{6}\+", name)),
+            "negrito": bool(flags & 16) or b, "italico": bool(flags & 2) or i,
+            "serifa": bool(flags & 4), "mono": bool(flags & 8),
+            "tamanho": span.get("size", 0), "cor": "#%06x" % span.get("color", 0),
+            "tipo": "", "embutida": False}
+    for _xref, ext, ftype, basefont, *_ in page.get_fonts(full=True):
+        if strip_subset(basefont) == info["nome"]:
+            info["tipo"] = ftype
+            info["embutida"] = ext not in ("n/a", "")
+            break
+    return info
+
+
+_qt_families: dict[str, str] = {}
+_BASE14_QT = {"helv": "Arial", "hebo": "Arial", "heit": "Arial", "hebi": "Arial",
+              "tiro": "Times New Roman", "tibo": "Times New Roman", "tiit": "Times New Roman",
+              "tibi": "Times New Roman", "cour": "Courier New", "cobo": "Courier New",
+              "coit": "Courier New", "cobi": "Courier New"}
+
+
+def qt_family(font: ResolvedFont) -> str:
+    """Registra a fonte no Qt (para a prévia ao vivo) e devolve o nome da família."""
+    if font.base14:
+        return _BASE14_QT.get(font.base14, "Arial")
+    if font.label in _qt_families:
+        return _qt_families[font.label]
+    fam = ""
+    try:
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtGui import QFontDatabase
+        data = font.fontbuffer or Path(font.fontfile).read_bytes()
+        fid = QFontDatabase.addApplicationFontFromData(QByteArray(data))
+        fams = QFontDatabase.applicationFontFamilies(fid) if fid >= 0 else []
+        fam = fams[0] if fams else ""
+    except Exception:
+        pass
+    _qt_families[font.label] = fam
+    return fam

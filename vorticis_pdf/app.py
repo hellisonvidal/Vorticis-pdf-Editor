@@ -25,7 +25,7 @@ def parse_args(argv):
     for a in argv:
         if a in ACTIONS:
             action = ACTIONS[a]
-        elif a in ("--register-shell", "--unregister-shell"):
+        elif a in ("--register-shell", "--unregister-shell", "--selftest"):
             special = a
         elif not a.startswith("--"):
             files.append(os.path.abspath(a))
@@ -62,6 +62,8 @@ class Controller:
         for w in list(self.windows):
             if not w.close():
                 return
+        from .tasks import wait_all
+        wait_all()
         self.app.quit()
 
     def _target_window(self, prefer=None):
@@ -172,6 +174,12 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     action, files, special = parse_args(argv)
 
+    from .config import install_crash_handlers
+    install_crash_handlers()
+
+    if special == "--selftest":
+        from .selftest import run
+        return run()
     if special:
         from . import shell_integration as shell
         try:
@@ -202,7 +210,8 @@ def main(argv=None):
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Vorticis")
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
-    app.setStyle("Fusion")
+    from . import theme
+    theme.apply(app)
 
     # já existe uma instância? repassa os arquivos e sai (Explorer abre 1 processo por arquivo)
     if send_to_running(action, files):

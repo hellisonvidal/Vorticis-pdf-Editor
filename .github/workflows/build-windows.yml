@@ -26,9 +26,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: Teste rápido
-        run: python -c "import vorticis_pdf.document, vorticis_pdf.converters, vorticis_pdf.fonts; print('ok')"
-
       - name: Gerar executável (PyInstaller)
         run: pyinstaller --noconfirm VorticisPDF.spec
 
@@ -39,27 +36,75 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT;
           else echo "v=$(python -c 'import vorticis_pdf;print(vorticis_pdf.__version__)')" >> $GITHUB_OUTPUT; fi
 
+      - name: Autoteste do executável
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\VorticisPDF\VorticisPDF.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content "$env:APPDATA\Vorticis PDF Editor\selftest.log"
+          if ($p.ExitCode -ne 0) { throw "Autoteste falhou ($($p.ExitCode))" }
+
       - name: Gerar instalador (Inno Setup)
         shell: pwsh
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.v }}" installer\vorticis.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup falhou" }
 
-      - name: Versão portátil (zip)
+      - name: Testar instalação silenciosa sem administrador
         shell: pwsh
-        run: Compress-Archive -Path dist\VorticisPDF\* -DestinationPath "VorticisPDF-Portatil-${{ steps.ver.outputs.v }}.zip"
+        run: |
+          $setup = Get-ChildItem installer\Output\*.exe | Select-Object -First 1
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CURRENTUSER","/TASKS=contextmenu" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Instalação falhou ($($p.ExitCode))" }
+          $exe = "$env:LOCALAPPDATA\Programs\Vorticis PDF Editor\VorticisPDF.exe"
+          if (-not (Test-Path $exe)) { throw "Executável não encontrado após instalar" }
+          Remove-Item "$env:APPDATA\Vorticis PDF Editor\selftest.log" -ErrorAction SilentlyContinue
+          $t = Start-Process -FilePath $exe -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content "$env:APPDATA\Vorticis PDF Editor\selftest.log"
+          if ($t.ExitCode -ne 0) { throw "Programa instalado falhou no autoteste" }
+          if (-not (Test-Path "HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\VorticisPDF")) { throw "Menu de contexto não registrado" }
+          Write-Host "Instalação, autoteste e menu de contexto OK"
+          $un = "$env:LOCALAPPDATA\Programs\Vorticis PDF Editor\unins000.exe"
+          Start-Process -FilePath $un -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
 
-      - uses: actions/upload-artifact@v4
+      - name: Montar versão portátil (zip)
+        shell: pwsh
+        run: |
+          $dir = "VorticisPDF-Portatil"
+          Copy-Item -Recurse dist\VorticisPDF $dir
+          Copy-Item installer\portable.txt "$dir\portable.txt"
+          $t = Start-Process -FilePath "$dir\VorticisPDF.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content "$dir\dados\selftest.log"
+          if ($t.ExitCode -ne 0) { throw "Versão portátil falhou no autoteste" }
+          Remove-Item -Recurse -Force "$dir\dados"
+          Compress-Archive -Path $dir -DestinationPath "VorticisPDF-Portatil-${{ steps.ver.outputs.v }}.zip"
+
+      - name: Somas de verificação (SHA-256)
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem installer\Output\*.exe) + @(Get-ChildItem VorticisPDF-Portatil-*.zip)
+          $files | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - name: Artefato - Instalador
+        uses: actions/upload-artifact@v4
         with:
-          name: VorticisPDF-${{ steps.ver.outputs.v }}
-          path: |
-            installer/Output/*.exe
-            VorticisPDF-Portatil-*.zip
+          name: VorticisPDF-Instalador-${{ steps.ver.outputs.v }}
+          path: installer/Output/*.exe
+
+      - name: Artefato - Portátil
+        uses: actions/upload-artifact@v4
+        with:
+          name: VorticisPDF-Portatil-${{ steps.ver.outputs.v }}
+          path: VorticisPDF-Portatil-*.zip
 
       - name: Publicar release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: Vorticis PDF Editor ${{ steps.ver.outputs.v }}
+          body_path: installer/release_notes.md
           files: |
             installer/Output/*.exe
             VorticisPDF-Portatil-*.zip
+            SHA256SUMS.txt
