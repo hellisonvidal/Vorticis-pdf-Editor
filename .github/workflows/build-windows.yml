@@ -42,8 +42,10 @@ jobs:
       - name: Autoteste do executável
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\VorticisPDF\VorticisPDF.exe" -ArgumentList "--selftest" -Wait -PassThru
+          $p = Start-Process -FilePath "dist\VorticisPDF\VorticisPDF.exe" -ArgumentList "--selftest" -PassThru
+          $ok = $p.WaitForExit(300000)
           Get-Content "$env:APPDATA\Vorticis PDF Editor\selftest.log"
+          if (-not $ok) { Stop-Process -Id $p.Id -Force; throw "Autoteste travou (mais de 5 minutos)" }
           if ($p.ExitCode -ne 0) { throw "Autoteste falhou ($($p.ExitCode))" }
 
       - name: Gerar instalador (Inno Setup)
