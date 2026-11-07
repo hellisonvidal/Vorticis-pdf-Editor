@@ -29,10 +29,6 @@ jobs:
       - name: Baixar modelos de OCR (português, inglês, espanhol)
         run: python tools/fetch_tessdata.py
 
-      - name: Diagnóstico (temporário) da edição simultânea
-        continue-on-error: true
-        run: python -X faulthandler tools/diag_multi.py
-
       - name: Gerar executável (PyInstaller)
         run: pyinstaller --noconfirm VorticisPDF.spec
 

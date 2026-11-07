@@ -18,6 +18,7 @@ Requisitos: Windows 10 ou 11 (64 bits).
 - **Ferramenta Seleção por retângulos:** desenhe um ou mais retângulos e **edite vários textos ao mesmo tempo**. Tem localizar e substituir em todos e pode trocar fonte, tamanho e cor de todos, mantendo a fonte original de cada texto por padrão. Tudo vira um único passo de desfazer.
 - **Salvar um documento existente** apenas atualiza o arquivo original, sem mensagens.
 - Corrigido: um clique logo depois de desenhar algo era tomado por clique duplo.
+- Corrigido: depois de editar um texto com fontes como a Arial, os espaços eram lidos como "espaço não separável". Com isso, a busca não encontrava o texto editado e a cópia vinha com espaços especiais.
 
 ## Novidades da 1.3.0
 - **Windows 11:** as opções do Vorticis aparecem direto no menu do botão direito, sem precisar de "Mostrar mais opções". A opção vem marcada no instalador, pode ser ligada ou desligada pelo programa e é desfeita ao desinstalar.

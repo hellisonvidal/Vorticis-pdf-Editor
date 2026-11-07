@@ -130,6 +130,36 @@ def _find_annot(page, xref):
     return None
 
 
+# caracteres que muitas fontes (ex.: Arial) desenham com o mesmo glifo; ao embutir, o PDF
+# passava a "ler" o espaço como espaço não separável (e o hífen como hífen invisível),
+# quebrando a busca e a cópia do texto editado.
+_SAME_GLYPH = ((0x20, (0xA0, 0x2007, 0x202F)), (0x2D, (0xAD, 0x2010, 0x2011)))
+
+
+def _fix_tounicode(doc, font_xref, font):
+    try:
+        f = font.pymupdf_font()
+        kind, ref = doc.xref_get_key(font_xref, "ToUnicode")
+        if kind != "xref":
+            return
+        tu = int(ref.split()[0])
+        cmap = doc.xref_stream(tu).decode("latin-1")
+        changed = cmap
+        for good, bads in _SAME_GLYPH:
+            gid = f.has_glyph(good)
+            if not gid:
+                continue
+            for bad in bads:
+                if f.has_glyph(bad) == gid:
+                    for g in (f"{gid:04x}", f"{gid:04X}"):
+                        for b in (f"{bad:04x}", f"{bad:04X}"):
+                            changed = changed.replace(f"<{g}> <{b}>", f"<{g}> <{good:04x}>")
+        if changed != cmap:
+            doc.update_stream(tu, changed.encode("latin-1"))
+    except Exception:
+        pass  # nunca impede a edição
+
+
 class _ShapeOps:
     """Operações de formas/anotações (misturadas em PdfDocument)."""
 
@@ -503,7 +533,8 @@ class PdfDocument(_ShapeOps):
             # nome estável por fonte (o hash() do Python muda a cada execução)
             data = font.fontbuffer or font.fontfile.encode()
             name = "Vt" + format(zlib.crc32(data[:65536]) & 0xFFFFFFFF, "x")
-            page.insert_font(fontname=name, fontbuffer=font.fontbuffer, fontfile=font.fontfile)
+            xref = page.insert_font(fontname=name, fontbuffer=font.fontbuffer, fontfile=font.fontfile)
+            _fix_tounicode(page.parent, xref, font)
             kw["fontname"] = name
         else:
             kw["fontname"] = font.base14 or "helv"
