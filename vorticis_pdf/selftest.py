@@ -173,7 +173,23 @@ def run() -> int:
                   "size": sp["size"], "color": (0, 0, 0)} for pg, sp in spans]
         multi.replace_texts(items)
         got = multi.doc[0].get_text()
-        assert all(f"Campo {c} = {n}0" in got for c, n in (("A", 1), ("B", 2), ("C", 3))), got
+        if not all(f"Campo {c} = {n}0" in got for c, n in (("A", 1), ("B", 2), ("C", 3))):
+            # diagnóstico: repete passo a passo registrando a página depois de cada troca
+            dbg = PdfDocument(doc=pymupdf.open())
+            dp = dbg.doc.new_page()
+            for k, t in enumerate(("Campo A: 1", "Campo B: 2", "Campo C: 3")):
+                dp.insert_text((72, 100 + k * 30), t, fontsize=12)
+            del dp
+            for it in sorted(items, key=lambda i: -i["span"]["bbox"][0]):
+                fitted = dbg.fit_size(0, it["span"], it["text"], it["font"], it["size"])
+                band = dbg._text_band(it["span"])
+                used = dbg._replace_span(0, it["span"], it["text"], it["font"], it["size"], it["color"])
+                pg = dbg.doc[0]
+                lines = [(round(sp["bbox"][1]), sp["text"], sp["font"], round(sp["size"], 1))
+                         for b in pg.get_text("dict")["blocks"] for ln in b.get("lines", []) for sp in ln["spans"]]
+                log(f"  troca {it['span']['text']!r} -> {it['text']!r}: fit={fitted} faixa={band} "
+                    f"usado={used} fonte={it['font'].label}/{it['font'].source} -> {lines}")
+            raise AssertionError(got)
         assert len(multi._undo) == 1
         log("edição simultânea de vários textos OK")
 
