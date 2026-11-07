@@ -249,6 +249,143 @@ class TextDialog(QDialog):
         return self.edit.toPlainText(), self._font, self.size.value(), self.color.rgb, self.fit.isChecked()
 
 
+class MultiTextDialog(QDialog):
+    """Edição simultânea de vários textos selecionados com a ferramenta Seleção."""
+
+    COL_PAGE, COL_ORIG, COL_NEW, COL_FONT = range(4)
+
+    def __init__(self, parent, pdoc, items: list[tuple[int, dict]]):
+        super().__init__(parent)
+        self.pdoc, self.items = pdoc, items
+        self.setWindowTitle(f"Editar {len(items)} texto(s) selecionado(s)")
+        self.resize(940, 620)
+        lay = QVBoxLayout(self)
+        intro = QLabel("Edite os textos na coluna <b>Novo texto</b>. Cada texto mantém a sua fonte "
+                       "original, e o tamanho é ajustado para não sobrepor linhas e marcações.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        fr = QHBoxLayout()
+        self.find = QLineEdit()
+        self.find.setPlaceholderText("localizar em todos os textos selecionados")
+        self.repl = QLineEdit()
+        self.repl.setPlaceholderText("substituir por")
+        self.case = QCheckBox("Diferenciar maiúsculas")
+        b = QPushButton("Substituir em todos")
+        b.clicked.connect(self._replace_all)
+        fr.addWidget(QLabel("Localizar:"))
+        fr.addWidget(self.find, 2)
+        fr.addWidget(QLabel("por:"))
+        fr.addWidget(self.repl, 2)
+        fr.addWidget(self.case)
+        fr.addWidget(b)
+        lay.addLayout(fr)
+
+        self.table = QTableWidget(len(items), 4)
+        self.table.setHorizontalHeaderLabels(["Pág.", "Texto original", "Novo texto", "Fonte original"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.AllEditTriggers)
+        for r, (pg, sp) in enumerate(items):
+            vals = [str(pg + 1), sp["text"], sp["text"],
+                    f"{strip_subset(sp['font'])} • {sp['size']:.1f} pt"]
+            for c, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if c != self.COL_NEW:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                    if c == self.COL_ORIG:
+                        it.setForeground(QColor(tc("muted")))
+                self.table.setItem(r, c, it)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(self.COL_PAGE, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(self.COL_ORIG, QHeaderView.Stretch)
+        hh.setSectionResizeMode(self.COL_NEW, QHeaderView.Stretch)
+        hh.setSectionResizeMode(self.COL_FONT, QHeaderView.ResizeToContents)
+        lay.addWidget(self.table, 1)
+
+        box = QGroupBox("Aplicar a todos os textos selecionados")
+        g = QGridLayout(box)
+        self.font_combo = QComboBox()
+        self.font_combo.setEditable(True)
+        self.font_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.font_combo.addItem("★ Manter a fonte original de cada texto", "__keep__")
+        for lbl in all_font_labels():
+            self.font_combo.addItem(lbl, lbl)
+        comp = QCompleter([self.font_combo.itemText(i) for i in range(self.font_combo.count())], self)
+        comp.setCaseSensitivity(Qt.CaseInsensitive)
+        comp.setFilterMode(Qt.MatchContains)
+        self.font_combo.setCompleter(comp)
+        g.addWidget(QLabel("Fonte:"), 0, 0)
+        g.addWidget(self.font_combo, 0, 1, 1, 3)
+        self.keep_size = QCheckBox("Manter o tamanho original")
+        self.keep_size.setChecked(True)
+        self.size = QDoubleSpinBox(minimum=2, maximum=400, decimals=1, suffix=" pt")
+        self.size.setValue(items[0][1]["size"] if items else 12)
+        self.size.setEnabled(False)
+        self.keep_size.toggled.connect(lambda on: self.size.setEnabled(not on))
+        g.addWidget(self.keep_size, 1, 0, 1, 2)
+        g.addWidget(self.size, 1, 2)
+        self.keep_color = QCheckBox("Manter a cor original")
+        self.keep_color.setChecked(True)
+        self.color = ColorButton(int_to_rgb(items[0][1]["color"]) if items else (0, 0, 0))
+        self.color.setEnabled(False)
+        self.keep_color.toggled.connect(lambda on: self.color.setEnabled(not on))
+        g.addWidget(self.keep_color, 2, 0, 1, 2)
+        g.addWidget(self.color, 2, 2)
+        self.fit = QCheckBox("Ajustar o tamanho automaticamente para não ultrapassar o espaço de cada texto")
+        self.fit.setChecked(True)
+        g.addWidget(self.fit, 3, 0, 1, 4)
+        lay.addWidget(box)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Aplicar")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _replace_all(self):
+        import re
+        needle = self.find.text()
+        if not needle:
+            return
+        flags = 0 if self.case.isChecked() else re.IGNORECASE
+        pat = re.compile(re.escape(needle), flags)
+        n = 0
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, self.COL_NEW)
+            new, k = pat.subn(self.repl.text().replace("\\", "\\\\"), it.text())
+            if k:
+                it.setText(new)
+                n += k
+        self.find.setStyleSheet("" if n else f"border:1px solid {tc('accent')}")
+        self.setWindowTitle(f"Editar {len(self.items)} texto(s) — {n} substituição(ões)")
+
+    def values(self) -> list[dict]:
+        """Itens para PdfDocument.replace_texts (só os que mudam)."""
+        doc = self.pdoc.doc
+        choice = self.font_combo.currentData()
+        if choice is None:  # digitado
+            idx = self.font_combo.findText(self.font_combo.currentText().replace("★", "").strip(),
+                                           Qt.MatchContains)
+            choice = self.font_combo.itemData(idx) if idx >= 0 else "__keep__"
+        common_font = None if choice == "__keep__" else font_from_choice(choice)
+        out = []
+        for r, (pg, sp) in enumerate(self.items):
+            text = self.table.item(r, self.COL_NEW).text()
+            style_changed = common_font is not None or not self.keep_size.isChecked() or \
+                not self.keep_color.isChecked()
+            if text == sp["text"] and not style_changed:
+                continue
+            font = common_font
+            if font is None:
+                page = doc[pg]
+                font = resolve_font(doc, page, sp["font"], sp["flags"], text or "Aa")
+            out.append({"page": pg, "span": sp, "text": text, "font": font,
+                        "size": sp["size"] if self.keep_size.isChecked() else self.size.value(),
+                        "color": int_to_rgb(sp["color"]) if self.keep_color.isChecked() else self.color.rgb})
+        return out
+
+
 # ====================================================================== informações de salvamento
 class SaveInfoDialog(QDialog):
     def __init__(self, parent, info: dict, title="Documento salvo com sucesso"):

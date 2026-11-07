@@ -12,11 +12,14 @@ ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 
 PAGE_GAP = 14
 
 # ferramentas
+# BROWSE = nenhuma ferramenta ativa: arrastar sobre o texto seleciona; fora do texto, move a página
+BROWSE = "browse"
 SELECT, EDIT_TEXT, ADD_TEXT, HIGHLIGHT, RECT, WHITEOUT, NOTE, IMAGE, CROP, PAN, SIGN, SHAPE, INK = (
     "select", "edit_text", "add_text", "highlight", "rect", "whiteout", "note", "image", "crop", "pan",
     "sign", "shape", "ink")
-DRAG_TOOLS = {RECT, WHITEOUT, IMAGE, CROP, SIGN, SHAPE}
-TEXT_FLOW_TOOLS = {SELECT, HIGHLIGHT}  # arrastar sobre o texto seleciona na ordem de leitura
+DRAG_TOOLS = {RECT, WHITEOUT, IMAGE, CROP, SIGN, SHAPE, SELECT}  # SELECT = retângulos de seleção
+TEXT_FLOW_TOOLS = {BROWSE, HIGHLIGHT}  # arrastar sobre o texto seleciona na ordem de leitura
+ANNOT_TOOLS = {BROWSE, SHAPE, INK, PAN}  # nestes modos dá para clicar numa forma e movê-la
 # anotações que podem ser selecionadas/movidas com o mouse
 MOVABLE = {"Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "FreeText", "Text", "Stamp"}
 SELECTABLE = MOVABLE | {"Highlight", "Underline", "StrikeOut", "Squiggly"}
@@ -50,6 +53,7 @@ class PageWidget(QWidget):
         self.ink_points: list[QPointF] = []
         self._clicks = 0
         self._last_click = 0.0
+        self._last_pos: QPointF | None = None
         self.setMouseTracking(True)
 
     def sizeHint(self):
@@ -110,9 +114,27 @@ class PageWidget(QWidget):
             p.setPen(QPen(QColor(214, 35, 45), 1.5, Qt.DashLine))
             p.fillRect(self.hover_rect, QColor(214, 35, 45, 25))
             p.drawRect(self.hover_rect)
+        self._paint_rect_selection(p)
         self._paint_selected_annot(p)
         self._paint_preview(p)
         p.end()
+
+    def _paint_rect_selection(self, p):
+        v = self.view
+        if not v.rect_sel and not v.sel_items:
+            return
+        blue = QColor(40, 120, 255)
+        for pg, r in v.rect_sel:
+            if pg == self.index:
+                p.setPen(QPen(blue, 1.2, Qt.DashLine))
+                p.setBrush(QColor(40, 120, 255, 18))
+                p.drawRect(self.to_screen(r))
+        p.setBrush(QColor(40, 120, 255, 55))
+        p.setPen(QPen(blue, 1))
+        for pg, span in v.sel_items:
+            if pg == self.index:
+                p.drawRect(self.to_screen(span["bbox"]).adjusted(-1, -1, 1, 1))
+        p.setBrush(Qt.NoBrush)
 
     def _paint_selected_annot(self, p):
         sel = self.view.sel_annot
@@ -148,6 +170,7 @@ class PageWidget(QWidget):
             self._paint_shape(p, self.view.shape_kind, a, b)
             return
         colors = {WHITEOUT: QColor(255, 255, 255, 200), RECT: QColor(214, 35, 45, 30),
+                  SELECT: QColor(40, 120, 255, 35),
                   CROP: QColor(0, 0, 0, 0), IMAGE: QColor(40, 120, 255, 40), SIGN: QColor(27, 138, 58, 45)}
         p.fillRect(r, colors.get(tool, QColor(0, 0, 0, 30)))
         p.setPen(QPen(QColor(30, 30, 30), 1, Qt.DashLine))
@@ -202,7 +225,7 @@ class PageWidget(QWidget):
         view = self.view
         if e.button() == Qt.RightButton:
             pt = self.to_pdf(e.position())
-            ann = view.annot_at(self.index, pt) if view.tool in (SELECT, SHAPE, INK, PAN) else None
+            ann = view.annot_at(self.index, pt) if view.tool in ANNOT_TOOLS else None
             if ann:
                 view.select_annot(self.index, ann)
                 view.annotMenuRequested.emit(self.index, ann[0], e.globalPosition().toPoint())
@@ -219,15 +242,20 @@ class PageWidget(QWidget):
         # contagem de cliques (duplo = palavra, triplo = linha)
         import time
         now = time.monotonic()
-        self._clicks = self._clicks + 1 if now - self._last_click < 0.4 else 1
-        self._last_click = now
+        near = self._last_pos is not None and (pos - self._last_pos).manhattanLength() <= 6
+        interval = QApplication.doubleClickInterval() / 1000
+        self._clicks = self._clicks + 1 if (near and now - self._last_click < interval) else 1
+        if getattr(self, "_dbl", False):  # evento de clique duplo do sistema: no mínimo 2 cliques
+            self._clicks = max(self._clicks, 2)
+            self._dbl = False
+        self._last_click, self._last_pos = now, pos
 
-        if tool in (SELECT, SHAPE, INK) and self._on_handle(pos):
+        if tool in ANNOT_TOOLS and self._on_handle(pos):
             self.mode, self.drag_start, self.drag_now = "resize", pos, pos
             return
-        if tool in (SELECT, SHAPE, INK, PAN):
+        if tool in ANNOT_TOOLS:
             ann = view.annot_at(self.index, pt)
-            if ann and (tool == SELECT or ann[1] in MOVABLE):
+            if ann and (tool == BROWSE or ann[1] in MOVABLE):
                 view.select_annot(self.index, ann)
                 self.mode = "move" if ann[1] in MOVABLE else None
                 self.drag_start = self.drag_now = pos
@@ -261,6 +289,12 @@ class PageWidget(QWidget):
         elif tool == INK:
             self.mode = "ink"
             self.ink_points = [pos]
+        elif tool == SELECT and self._clicks >= 2 and view.item_at(self.index, pt) is not None:
+            # clique duplo num texto: garante que ele está selecionado e abre a edição
+            sp = view.item_at(self.index, pt)
+            if not any(pg == self.index and s["bbox"] == sp["bbox"] for pg, s in view.sel_items):
+                view.toggle_item(self.index, pt)
+            view.editSelectedRequested.emit()
         elif tool in DRAG_TOOLS:
             self.mode = "area"
             self.drag_start = self.drag_now = pos
@@ -270,6 +304,10 @@ class PageWidget(QWidget):
                 view.editTextRequested.emit(self.index, span)
         elif tool in (ADD_TEXT, NOTE):
             (view.addTextRequested if tool == ADD_TEXT else view.noteRequested).emit(self.index, (pt.x, pt.y))
+
+    def mouseDoubleClickEvent(self, e):
+        self._dbl = True
+        self.mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
         view = self.view
@@ -301,7 +339,10 @@ class PageWidget(QWidget):
                 self.hover_rect = new
                 view.spanHovered.emit(self.index, span)
                 self.update()
-        elif tool in (SELECT, HIGHLIGHT, SHAPE, INK, PAN):
+        elif tool == SELECT:
+            self.setCursor(Qt.PointingHandCursor if view.item_at(self.index, pt) is not None
+                           else Qt.CrossCursor)
+        elif tool in (BROWSE, HIGHLIGHT, SHAPE, INK, PAN):
             if self._on_handle(pos):
                 self.setCursor(Qt.SizeFDiagCursor)
             elif tool != HIGHLIGHT and view.annot_at(self.index, pt):
@@ -321,6 +362,8 @@ class PageWidget(QWidget):
     def mouseReleaseEvent(self, e):
         view = self.view
         mode, self.mode = self.mode, None
+        if self._last_pos is not None and (e.position() - self._last_pos).manhattanLength() > 6:
+            self._clicks, self._last_pos = 0, None  # foi um arraste, não um clique
         if mode == "pan":
             view.panning = False
             self.setCursor(view.tool_cursor())
@@ -357,6 +400,12 @@ class PageWidget(QWidget):
             a, b = self.drag_start, self.drag_now or e.position()
             self.drag_start = self.drag_now = None
             self.update()
+            if view.tool == SELECT:
+                if (a - b).manhattanLength() < 4:  # clique simples: liga/desliga o texto clicado
+                    view.toggle_item(self.index, self.to_pdf(b))
+                else:
+                    view.add_select_rect(self.index, self.rect_to_pdf(a, b))
+                return
             if (a - b).manhattanLength() < 4:
                 return
             if view.tool == SHAPE:
@@ -383,14 +432,19 @@ class PdfView(QScrollArea):
     pageMenuRequested = Signal(int, tuple, object)
     markupRequested = Signal(str)
     selectionChanged = Signal(bool)
+    rectSelectionChanged = Signal(int)   # quantos textos estão selecionados pelos retângulos
+    editSelectedRequested = Signal()
+    deleteSelectedRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.doc: pymupdf.Document | None = None
         self.zoom = 1.0
         self.fit_mode = "width"  # 'width' | 'page' | None
-        self.tool = SELECT
+        self.tool = BROWSE
         self.pages: list[PageWidget] = []
+        self.rect_sel: list[tuple[int, pymupdf.Rect]] = []   # retângulos desenhados pelo usuário
+        self.sel_items: list[tuple[int, dict]] = []          # trechos de texto selecionados
         self.current = 0
         self.search_hits: list[tuple[int, pymupdf.Rect]] = []
         self.current_hit = None
@@ -442,6 +496,7 @@ class PdfView(QScrollArea):
         self.selection_rects = []
         self.text_sel = None
         self.sel_annot = None
+        self.rect_sel, self.sel_items = [], []
         self.doc = doc
         if doc is None:
             self.container.resize(10, 10)
@@ -464,6 +519,8 @@ class PdfView(QScrollArea):
                 self._span_cache.pop(i, None)
                 self._char_cache.pop(i, None)
                 self.pages[i].update()
+        if self.rect_sel or self.sel_items:  # o texto mudou: recalcula a seleção por retângulos
+            self._recompute_items()
         if self.sel_annot and (pages is None or self.sel_annot[0] in pages):
             self.sel_annot = None
 
@@ -760,6 +817,67 @@ class PdfView(QScrollArea):
             return True
         return False
 
+    # ---------- seleção por retângulos (ferramenta Seleção) ----------
+    @staticmethod
+    def _inside(span_rect: pymupdf.Rect, sel: pymupdf.Rect) -> bool:
+        inter = span_rect & sel
+        return not inter.is_empty and inter.get_area() >= 0.5 * max(span_rect.get_area(), 1e-6)
+
+    def _recompute_items(self):
+        items = []
+        for pg, r in self.rect_sel:
+            if pg >= (self.doc.page_count if self.doc else 0):
+                continue
+            for sp in self.spans(pg):
+                if self._inside(pymupdf.Rect(sp["bbox"]), r) and \
+                        not any(p == pg and s["bbox"] == sp["bbox"] for p, s in items):
+                    items.append((pg, sp))
+        for pg, sp in getattr(self, "_extra_items", []):
+            if not any(p == pg and s["bbox"] == sp["bbox"] for p, s in items):
+                items.append((pg, sp))
+        items.sort(key=lambda it: (it[0], round(it[1]["bbox"][1]), it[1]["bbox"][0]))
+        self.sel_items = items
+        self.selected_text = "\n".join(s["text"].strip() for _p, s in items)
+        self.rectSelectionChanged.emit(len(items))
+        for w in self.pages:
+            w.update()
+
+    def add_select_rect(self, index, rect: pymupdf.Rect):
+        self.rect_sel.append((index, pymupdf.Rect(rect)))
+        self._recompute_items()
+
+    def item_at(self, index, pt):
+        for sp in self.spans(index):
+            if pymupdf.Rect(sp["bbox"]).contains(pt):
+                return sp
+        return None
+
+    def toggle_item(self, index, pt):
+        """Clique simples com a ferramenta Seleção: inclui/retira o texto clicado; clicar
+        fora de qualquer texto limpa toda a seleção."""
+        sp = self.item_at(index, pt)
+        if sp is None:
+            self.clear_rect_selection()
+            return
+        extra = getattr(self, "_extra_items", [])
+        selected = any(p == index and s["bbox"] == sp["bbox"] for p, s in self.sel_items)
+        if selected:
+            self._extra_items = [(p, s) for p, s in extra if not (p == index and s["bbox"] == sp["bbox"])]
+            # retira também dos retângulos que o contêm
+            self.rect_sel = [(p, r) for p, r in self.rect_sel
+                             if not (p == index and self._inside(pymupdf.Rect(sp["bbox"]), r))]
+        else:
+            self._extra_items = extra + [(index, sp)]
+        self._recompute_items()
+
+    def clear_rect_selection(self):
+        if self.rect_sel or self.sel_items or getattr(self, "_extra_items", None):
+            self.rect_sel, self.sel_items, self._extra_items = [], [], []
+            self.selected_text = ""
+            self.rectSelectionChanged.emit(0)
+            for w in self.pages:
+                w.update()
+
     # ---------- anotações (formas, notas, marcações) ----------
     def annot_at(self, index, pt: pymupdf.Point):
         """(xref, tipo, retângulo) da anotação sob o ponto (a de cima primeiro)."""
@@ -794,12 +912,23 @@ class PdfView(QScrollArea):
             self.sel_annot = None
             self.annotDeleteRequested.emit(pg, xref)
             return
+        if self.tool == SELECT and self.sel_items:
+            if e.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_F2):
+                self.editSelectedRequested.emit()
+                return
+            if e.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                self.deleteSelectedRequested.emit()
+                return
         if e.key() == Qt.Key_A and e.modifiers() & Qt.ControlModifier:
-            self.select_all_page()
+            if self.tool == SELECT:  # seleciona todos os textos da página atual
+                self.add_select_rect(self.current, pymupdf.Rect(-1e6, -1e6, 1e6, 1e6))
+            else:
+                self.select_all_page()
             return
-        if e.key() == Qt.Key_Escape and (self.sel_annot or self.text_sel):
+        if e.key() == Qt.Key_Escape and (self.sel_annot or self.text_sel or self.sel_items):
             self.clear_annot_selection()
             self.clear_selection()
+            self.clear_rect_selection()
             return
         super().keyPressEvent(e)
 
@@ -831,7 +960,8 @@ class PdfView(QScrollArea):
 
     # ---------------- ferramenta ----------------
     def tool_cursor(self):
-        cursors = {SELECT: Qt.ArrowCursor, HIGHLIGHT: Qt.IBeamCursor, EDIT_TEXT: Qt.PointingHandCursor,
+        cursors = {BROWSE: Qt.ArrowCursor, SELECT: Qt.CrossCursor, HIGHLIGHT: Qt.IBeamCursor,
+                   EDIT_TEXT: Qt.PointingHandCursor,
                    ADD_TEXT: Qt.CrossCursor, PAN: Qt.OpenHandCursor, NOTE: Qt.CrossCursor}
         return QCursor(cursors.get(self.tool, Qt.CrossCursor))
 
@@ -839,8 +969,12 @@ class PdfView(QScrollArea):
         self.tool = tool
         if tool != EDIT_TEXT:
             self.spanHovered.emit(self.current, None)
-        if tool not in (SELECT, SHAPE, INK, PAN):
+        if tool not in ANNOT_TOOLS:
             self.clear_annot_selection()
+        if tool != SELECT:
+            self.clear_rect_selection()
+        else:
+            self.clear_selection()
         cur = self.tool_cursor()
         for w in self.pages:
             w.setCursor(cur)

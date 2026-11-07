@@ -193,6 +193,12 @@ class MainWindow(QMainWindow):
             if name:
                 b.setIcon(icon(name, c("accent")))
                 b.setIconSize(QSize(26, 26))
+        for b in self.findChildren(QToolButton):
+            name = b.property("vicon_btn")
+            if name:
+                b.setIcon(icon(name))
+        if hasattr(self, "sel_edit_btn"):
+            self.sel_edit_btn.setIcon(icon("edit_text", "#ffffff"))
         if hasattr(self, "merge_btn"):
             self.merge_btn.setIcon(icon("merge", "#ffffff"))
         if hasattr(self, "_search_icon"):
@@ -340,13 +346,16 @@ class MainWindow(QMainWindow):
             self.theme_group.addAction(ta)
             self.theme_actions[key] = ta
 
-        # ferramentas (exclusivas)
+        # ferramentas: no máximo uma ativa; clicar de novo na ativa a desliga. Sem ferramenta
+        # ativa, arrastar sobre o texto seleciona o texto (e fora dele move a página).
         self.tool_group = QActionGroup(self)
+        self.tool_group.setExclusionPolicy(QActionGroup.ExclusionPolicy.ExclusiveOptional)
         self.tool_actions = {}
         for key, text, ic, sc, tip in (
-            (V.SELECT, "Selecionar e mover", "select", "S",
-             "Padrão: arraste sobre o texto para selecionar (duplo clique = palavra, triplo = linha); "
-             "arraste fora do texto para mover a página; clique numa forma para movê-la"),
+            (V.SELECT, "Seleção por retângulos", "select", "S",
+             "Desenhe um ou mais retângulos para selecionar vários textos e editá-los de uma vez "
+             "(clique num texto para incluir/retirar; Enter ou clique duplo para editar). "
+             "Sem esta ferramenta, basta arrastar o mouse sobre o texto para selecioná-lo."),
             (V.PAN, "Mão", "pan", "H", "Arrastar a página"),
             (V.EDIT_TEXT, "Editar texto", "edit_text", "E",
              "Passe o mouse para ver a fonte; clique para editar mantendo a fonte original"),
@@ -362,11 +371,11 @@ class MainWindow(QMainWindow):
             (V.SIGN, "Assinar com certificado digital", "signature", "G",
              "Arraste a área onde o carimbo da assinatura digital (A1/A3, ICP-Brasil) deve aparecer"),
         ):
-            a = A(text, lambda _c=False, k=key: self.set_tool(k), sc, ic, tip, checkable=True)
+            a = A(text, lambda checked=False, k=key: self.set_tool(k if checked else V.BROWSE),
+                  sc, ic, tip, checkable=True)
             a.setIcon(icon(ic))
             self.tool_group.addAction(a)
             self.tool_actions[key] = a
-        self.tool_actions[V.SELECT].setChecked(True)
 
     def _build_menus(self):
         mb = self.menuBar()
@@ -472,6 +481,7 @@ class MainWindow(QMainWindow):
         tb.addAction(self.a_about)
 
         self._build_shape_bar()
+        self._build_sel_bar()
 
         rail = QToolBar("Ferramentas")
         rail.setObjectName("ToolRail")
@@ -543,6 +553,51 @@ class MainWindow(QMainWindow):
         bar.hide()
         self.shape_bar = bar
 
+    def _build_sel_bar(self):
+        bar = QToolBar("Seleção")
+        bar.setObjectName("HeaderBar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.addToolBar(Qt.TopToolBarArea, bar)
+        self.sel_count = QLabel("  Nenhum texto selecionado  ")
+        self.sel_count.setStyleSheet("font-weight:600")
+        bar.addWidget(self.sel_count)
+        self.sel_edit_btn = QPushButton(icon("edit_text", "#ffffff"), "  Editar textos selecionados")
+        self.sel_edit_btn.setObjectName("Primary")
+        self.sel_edit_btn.clicked.connect(self.edit_selected_texts)
+        bar.addWidget(self.sel_edit_btn)
+        self.sel_actions = []
+        for ic, label, fn in (("copy", "Copiar", self.copy),
+                              ("highlight", "Destacar", lambda: self.markup_rect_selection("highlight")),
+                              (None, "Sublinhar", lambda: self.markup_rect_selection("underline")),
+                              ("trash", "Excluir textos", self.delete_selected_texts),
+                              (None, "Limpar seleção", self.view.clear_rect_selection)):
+            b = QToolButton()
+            b.setText(label)
+            if ic:
+                b.setIcon(icon(ic))
+                b.setProperty("vicon_btn", ic)
+            b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            b.clicked.connect(fn)
+            bar.addWidget(b)
+            self.sel_actions.append(b)
+        hint = QLabel("    Arraste para adicionar retângulos • clique num texto para incluir/retirar • "
+                      "Ctrl+A = página inteira • Enter = editar")
+        hint.setObjectName("Muted")
+        bar.addWidget(hint)
+        bar.hide()
+        self.sel_bar = bar
+
+    def _update_sel_bar(self, n):
+        if not hasattr(self, "sel_count"):
+            return
+        self.sel_count.setText(f"  {n} texto(s) selecionado(s)  " if n else
+                               "  Desenhe retângulos sobre os textos  ")
+        self.sel_edit_btn.setEnabled(n > 0)
+        for b in self.sel_actions[:-1]:
+            b.setEnabled(n > 0)
+
     @staticmethod
     def _rail_sep():
         w = QWidget()
@@ -587,6 +642,9 @@ class MainWindow(QMainWindow):
         self.view.annotMenuRequested.connect(self.annot_menu)
         self.view.pageMenuRequested.connect(self.page_menu)
         self.view.markupRequested.connect(self.markup_selection)
+        self.view.rectSelectionChanged.connect(self._update_sel_bar)
+        self.view.editSelectedRequested.connect(self.edit_selected_texts)
+        self.view.deleteSelectedRequested.connect(self.delete_selected_texts)
         self.thumbs.pageActivated.connect(
             lambda i: self.view.set_current_page(i) if not self.a_organize.isChecked() else None)
         self.thumbs.pagesMoved.connect(self.move_pages)
@@ -784,29 +842,23 @@ class MainWindow(QMainWindow):
         return self._do_save(path)
 
     def _do_save(self, path) -> bool:
-        if self.pdoc.path and os.path.abspath(path) == os.path.abspath(self.pdoc.path) \
-                and sig.has_signatures(path):
-            r = QMessageBox.warning(
-                self, APP_NAME, "Este PDF possui assinatura digital. Salvar alterações sobre ele "
-                "invalidará as assinaturas.\n\nDeseja salvar as alterações em uma cópia?",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-            if r == QMessageBox.Cancel:
-                return False
-            if r == QMessageBox.Yes:
-                p = Path(path)
-                path, _ = QFileDialog.getSaveFileName(self, "Salvar cópia", str(p.with_name(p.stem + "_editado.pdf")),
-                                                      PDF_FILTER)
-                if not path:
-                    return False
+        """Salvar sobre o próprio arquivo apenas o atualiza, sem nenhuma mensagem; em
+        "Salvar como" (arquivo novo) mostra as informações de salvamento."""
+        same_file = bool(self.pdoc.path) and os.path.abspath(path) == os.path.abspath(self.pdoc.path)
+        had_signature = same_file and sig.has_signatures(path)
         try:
             info = self.pdoc.save(path, self.save_password)
         except Exception as e:
-            QMessageBox.critical(self, APP_NAME, f"Erro ao salvar:\n{e}")
+            from .i18n import friendly
+            QMessageBox.critical(self, APP_NAME, f"Erro ao salvar:\n{friendly(e)}")
             return False
         self._add_recent(path)
-        self._set_saved_badge(f"✔ Salvo às {now_str()[-8:]} • {info['tamanho_atual']} • {path}")
+        badge = f"✔ Salvo às {now_str()[-8:]} • {info['tamanho_atual']} • {path}"
+        if had_signature:
+            badge += " • as assinaturas digitais anteriores deixaram de valer"
+        self._set_saved_badge(badge)
         self._update_state()
-        if self.settings.value("show_save_info", True, type=bool):
+        if not same_file and self.settings.value("show_save_info", True, type=bool):
             SaveInfoDialog(self, info).exec()
         return True
 
@@ -872,14 +924,64 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Texto copiado", 2000)
 
     def set_tool(self, key):
-        self.tool_actions[key].setChecked(True)
+        """key = V.BROWSE desliga todas as ferramentas (modo padrão)."""
+        if key in self.tool_actions:
+            self.tool_actions[key].setChecked(True)
+        else:
+            for a in self.tool_actions.values():
+                a.setChecked(False)
         self.view.set_tool(key)
         self.shape_bar.setVisible(key in (V.SHAPE, V.INK))
         for a in self.shape_kind_act:
             a.setVisible(key == V.SHAPE)
-        if self.a_organize.isChecked() and key != V.SELECT:
+        self.sel_bar.setVisible(key == V.SELECT)
+        self._update_sel_bar(len(self.view.sel_items))
+        if self.a_organize.isChecked() and key != V.BROWSE:
             self.a_organize.setChecked(False)
             self.toggle_organize()
+
+    # ---------- vários textos (ferramenta Seleção por retângulos) ----------
+    def edit_selected_texts(self):
+        from .dialogs import MultiTextDialog
+        items = list(self.view.sel_items)
+        if not items or not self.pdoc:
+            return
+        dlg = MultiTextDialog(self, self.pdoc, items)
+        if not dlg.exec():
+            return
+        changes = dlg.values()
+        if not changes:
+            return
+        pages = sorted({c["page"] for c in changes})
+        try:
+            n = self.pdoc.replace_texts(changes, fit=dlg.fit.isChecked())
+        except Exception as e:
+            QMessageBox.critical(self, APP_NAME, f"Não foi possível editar os textos:\n{e}")
+            return
+        self.view.clear_rect_selection()
+        self.refresh(pages=pages)
+        self.statusBar().showMessage(f"{n} texto(s) editado(s) de uma só vez", 5000)
+
+    def delete_selected_texts(self):
+        items = list(self.view.sel_items)
+        if not items:
+            return
+        from .fonts import ResolvedFont
+        changes = [{"page": pg, "span": sp, "text": "", "font": ResolvedFont("Helvetica", "padrão", base14="helv"),
+                    "size": sp["size"], "color": (0, 0, 0)} for pg, sp in items]
+        self.pdoc.replace_texts(changes, fit=False)
+        self.pdoc.edits[-1] = f"Excluiu {len(items)} texto(s)"
+        self.view.clear_rect_selection()
+        self.refresh(pages=sorted({pg for pg, _sp in items}))
+
+    def markup_rect_selection(self, kind):
+        by_page = {}
+        for pg, sp in self.view.sel_items:
+            by_page.setdefault(pg, []).append(pymupdf.Rect(sp["bbox"]))
+        for pg, rects in by_page.items():
+            self.pdoc.markup_text(pg, rects, kind)
+        self.view.clear_rect_selection()
+        self.refresh(pages=list(by_page))
 
     def edit_text(self, page_no, span):
         dlg = TextDialog(self, self.pdoc, page_no, span)
@@ -1321,7 +1423,7 @@ class MainWindow(QMainWindow):
             from .config import log_save
             log_save({"arquivo": out, "data_hora": now_str(), "paginas": self.pdoc.page_count,
                       "alteracoes": [f"Assinado digitalmente por {info['signatario']}"]})
-            self.set_tool(V.SELECT)
+            self.set_tool(V.BROWSE)
             self.load(out)
 
         run_task(self, "Assinando...", sig.sign_pdf, self.pdoc.path, out, on_done=done, **params, **kw)
@@ -1429,7 +1531,7 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
-            self.set_tool(V.SELECT)
+            self.set_tool(V.BROWSE)
         elif e.key() in (Qt.Key_PageDown,) and self.pdoc:
             self.view.set_current_page(min(self.view.current + 1, self.pdoc.page_count - 1))
         elif e.key() in (Qt.Key_PageUp,) and self.pdoc:

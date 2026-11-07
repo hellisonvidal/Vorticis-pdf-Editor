@@ -160,6 +160,35 @@ def run() -> int:
         view.select_range(0, idx, idx + 5)
         assert view.selected_text == "Texto", view.selected_text
         log(f"novo PDF, {len(SHAPES)} formas e seleção de texto OK")
+        # edição simultânea de vários textos (um passo de desfazer)
+        multi = PdfDocument(doc=pymupdf.open())
+        mp = multi.doc.new_page()
+        for k, t in enumerate(("Campo A: 1", "Campo B: 2", "Campo C: 3")):
+            mp.insert_text((72, 100 + k * 30), t, fontsize=12)
+        del mp
+        spans = [(0, sp | {"dir": ln["dir"]}) for b in multi.doc[0].get_text("dict")["blocks"]
+                 for ln in b.get("lines", []) for sp in ln["spans"]]
+        items = [{"page": pg, "span": sp, "text": sp["text"].replace(":", " =") + "0",
+                  "font": resolve_font(multi.doc, multi.doc[0], sp["font"], sp["flags"], "x"),
+                  "size": sp["size"], "color": (0, 0, 0)} for pg, sp in spans]
+        multi.replace_texts(items)
+        got = multi.doc[0].get_text()
+        assert all(f"Campo {c} = {n}0" in got for c, n in (("A", 1), ("B", 2), ("C", 3))), got
+        assert len(multi._undo) == 1
+        log("edição simultânea de vários textos OK")
+
+        # impressão: sempre em uma face (nunca frente e verso)
+        from PySide6.QtPrintSupport import QPrinter
+        from .printing import _force_single_sided, _paint
+        pr = QPrinter(QPrinter.HighResolution)
+        pr.setDuplex(QPrinter.DuplexLongSide)
+        _force_single_sided(pr)
+        assert pr.duplex() == QPrinter.DuplexNone
+        pr.setOutputFormat(QPrinter.PdfFormat)
+        pr.setOutputFileName(str(tmp / "impresso.pdf"))
+        _paint(pr, multi.doc, [0])
+        assert pymupdf.open(str(tmp / "impresso.pdf")).page_count == 1
+        log("impressão em uma face OK")
         log("RESULTADO: SUCESSO")
         return 0
     except Exception:

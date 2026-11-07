@@ -1,10 +1,16 @@
-"""Impressão com pré-visualização (respeita a ordem atual das páginas)."""
+"""Impressão direta (respeita a ordem atual das páginas).
+
+Sem pré-visualização própria: o documento já está na tela. Abre a janela de impressão do
+Windows (com o botão Preferências/Propriedades da impressora) e imprime sempre em uma
+face só (frente e verso desativado, mesmo que a impressora tenha sido configurada assim).
+"""
 from __future__ import annotations
 
 import pymupdf
-from PySide6.QtCore import QRectF
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QPainter, QPageLayout, QTransform
-from PySide6.QtPrintSupport import QAbstractPrintDialog, QPrintDialog, QPrinter, QPrintPreviewDialog
+from PySide6.QtPrintSupport import QAbstractPrintDialog, QPrintDialog, QPrinter
+from PySide6.QtWidgets import QApplication
 
 from .viewer import pixmap_to_qimage
 
@@ -47,24 +53,30 @@ def _selected_pages(printer: QPrinter, page_count: int, subset: list[int] | None
     return copies
 
 
-def print_document(parent, doc: pymupdf.Document, subset: list[int] | None = None, preview=True):
+def _force_single_sided(printer: QPrinter):
+    printer.setDuplex(QPrinter.DuplexNone)
+
+
+def print_document(parent, doc: pymupdf.Document, subset: list[int] | None = None) -> bool:
     printer = QPrinter(QPrinter.HighResolution)
     printer.setDocName("Vorticis PDF")
     first = doc[subset[0] if subset else 0].rect
     printer.setPageOrientation(QPageLayout.Landscape if first.width > first.height
                                else QPageLayout.Portrait)
+    _force_single_sided(printer)
     total = len(subset) if subset else doc.page_count
     printer.setFromTo(1, total)
-
-    if preview:
-        dlg = QPrintPreviewDialog(printer, parent)
-        dlg.setWindowTitle("Pré-visualização de impressão")
-        dlg.resize(1000, 800)
-        dlg.paintRequested.connect(lambda p: _paint(p, doc, _selected_pages(p, doc.page_count, subset)))
-        dlg.exec()
-        return
     dlg = QPrintDialog(printer, parent)
+    dlg.setWindowTitle("Imprimir")
     dlg.setOption(QAbstractPrintDialog.PrintPageRange, True)
+    dlg.setOption(QAbstractPrintDialog.PrintCollateCopies, True)
     dlg.setMinMax(1, total)
-    if dlg.exec():
+    if not dlg.exec():
+        return False
+    _force_single_sided(printer)  # nunca frente e verso, mesmo se escolhido nas propriedades
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
         _paint(printer, doc, _selected_pages(printer, doc.page_count, subset))
+    finally:
+        QApplication.restoreOverrideCursor()
+    return True

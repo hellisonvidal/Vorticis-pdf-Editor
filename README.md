@@ -30,11 +30,24 @@ O build automático testa cada versão num Windows limpo antes de publicá-la. O
 * Busca de texto (`Ctrl+F`), seleção e cópia de texto.
 
 ### Selecionar texto, sem escolher ferramenta
-* **Clique e arraste sobre o texto** com o botão esquerdo para selecioná-lo na ordem de leitura, como num editor de texto. A seleção pode abranger várias linhas.
-* **Clique duplo** seleciona a palavra, **clique triplo** seleciona a linha, `Shift`+clique estende a seleção e `Ctrl+A` seleciona todo o texto da página.
-* Arrastar numa **área sem texto** move a página, como a ferramenta mão.
-* Com o **botão direito sobre a seleção**: copiar, destacar, sublinhar, riscar, traduzir ou localizar no documento. Fora da seleção, o mesmo botão oferece: adicionar texto, nota, forma ou imagem no ponto clicado, girar a página e inserir página em branco.
-* Também funciona em documentos digitalizados depois do OCR.
+Com **nenhuma ferramenta ativa**:
+* **Clique e arraste sobre o texto** com o botão esquerdo para selecioná-lo na ordem de leitura. A seleção pode ocupar várias linhas.
+* **Clique duplo** seleciona a palavra, **clique triplo** a linha, `Shift`+clique estende a seleção e `Ctrl+A` seleciona a página toda.
+* Arrastar numa área **sem texto** move a página.
+* O **botão direito** sobre a seleção oferece: copiar, destacar, sublinhar, riscar, traduzir ou localizar.
+
+Para desligar uma ferramenta, clique nela de novo ou pressione `Esc`.
+
+### Ferramenta Seleção: editar vários textos ao mesmo tempo
+Ative **Seleção por retângulos** (`S`, primeiro botão da barra lateral):
+* **Desenhe um ou mais retângulos** sobre os textos. Todos os textos dentro deles ficam selecionados.
+* Clique num texto para incluí-lo ou retirá-lo, e clique fora dos textos para limpar a seleção. `Ctrl+A` seleciona todos os textos da página.
+* **Editar textos selecionados** (botão, `Enter` ou clique duplo) abre todos numa tabela para editar de uma vez:
+  * localizar e substituir em todos;
+  * trocar fonte, tamanho ou cor de todos ou manter os de cada um. Por padrão, cada texto mantém a sua fonte original;
+  * cada texto é ajustado para não sobrepor linhas e marcações.
+  * A edição inteira vira um único passo de desfazer.
+* A barra da seleção também permite copiar, destacar, sublinhar e excluir os textos selecionados.
 
 ### Criar um PDF do zero
 **Arquivo › Novo PDF** (`Ctrl+N`), ou **Novo PDF** na tela inicial:
@@ -89,7 +102,9 @@ Todas as fontes instaladas entram na lista: `C:\Windows\Fonts`, as fontes do usu
 ### Unir, separar e imprimir
 * **Unir**: aceita PDFs, Word, Excel, PowerPoint, imagens e outros formatos, que são convertidos automaticamente. Arraste para definir a ordem e use **Adicionar pasta** para incluir todos os arquivos de uma pasta. Cada arquivo vira um marcador no PDF final.
 * **Separar**: uma página por arquivo, a cada N páginas, por intervalos (`1-3, 4, 5-`) ou ao meio. Funciona com vários PDFs de uma vez.
-* **Imprimir** (`Ctrl+P`): imprime na ordem atual das páginas, com pré-visualização. Páginas em paisagem giram automaticamente.
+* **Imprimir** (`Ctrl+P`) abre direto a janela de impressão do Windows. Nela ficam a escolha da impressora e o botão **Preferências/Propriedades**. Não há pré-visualização própria: o documento já está na tela.
+  * A impressão segue a ordem atual das páginas, e páginas em paisagem giram automaticamente.
+  * **Sempre em uma face só.** O frente e verso é desativado mesmo que esteja marcado nas propriedades da impressora.
 
 ### Converter
 | De → Para | Como |
@@ -112,7 +127,8 @@ Se vários arquivos estiverem selecionados, o Vorticis junta todos numa única o
 > Essa opção ativa o menu completo do Windows (o mesmo de "Mostrar mais opções") diretamente, para todos os programas. Vale só para o seu usuário, não precisa de administrador e é desfeita ao desinstalar. Para aplicar, o Explorer é reiniciado uma vez.
 
 ### Informações de salvamento
-* Depois de salvar, uma janela mostra o arquivo, a data e a hora, o número de páginas, o tamanho antes e depois, a proteção por senha e a **lista de alterações feitas**.
+* **Salvar (`Ctrl+S`) um documento que já existe só atualiza o arquivo original, sem nenhuma mensagem.** O resultado aparece apenas na barra de status.
+* Ao salvar com um nome novo (Salvar como, documento novo ou convertido), uma janela mostra o arquivo, a data e a hora, o número de páginas, o tamanho antes e depois, a proteção por senha e a **lista de alterações feitas**.
 * A barra de status indica quantas alterações ainda não foram salvas. Ao fechar, o programa pergunta se quer salvar e lista as alterações.
 * Os metadados do PDF são atualizados: data de modificação e produtor *Vorticis PDF Editor*.
 * **Arquivo › Histórico de salvamentos** guarda todos os salvamentos, uniões e separações. O histórico fica em `%APPDATA%\Vorticis PDF Editor\historico_salvamentos.jsonl`.

@@ -455,10 +455,26 @@ class PdfDocument(_ShapeOps):
                      size: float, color, fit=True) -> float:
         """Remove o trecho original e escreve o novo com a fonte reconhecida, sem apagar
         linhas, tabelas, marcações ou textos vizinhos. Retorna o tamanho de fonte usado."""
-        new_text = " ".join(new_text.split("\n")).rstrip()
-        if fit:
-            size = self.fit_size(page_no, span, new_text, font, size)[0]
         self.checkpoint(f"Editou texto na página {page_no + 1}")
+        return self._replace_span(page_no, span, new_text, font, size, color, fit)
+
+    def replace_texts(self, items: list[dict], fit=True) -> int:
+        """Edita vários trechos de uma vez (um único passo de desfazer).
+        items: [{'page', 'span', 'text', 'font', 'size', 'color'}]. Retorna quantos mudaram."""
+        if not items:
+            return 0
+        pages = sorted({it["page"] + 1 for it in items})
+        where = f"página {pages[0]}" if len(pages) == 1 else f"{len(pages)} páginas"
+        self.checkpoint(f"Editou {len(items)} texto(s) simultaneamente ({where})")
+        # da direita para a esquerda: cada trecho ainda vê o vizinho original ao se ajustar
+        for it in sorted(items, key=lambda i: (i["page"], -i["span"]["bbox"][0])):
+            self._replace_span(it["page"], it["span"], it["text"], it["font"], it["size"], it["color"], fit)
+        return len(items)
+
+    def _replace_span(self, page_no, span, new_text, font, size, color, fit=True) -> float:
+        new_text = " ".join(new_text.split("\n")).rstrip()
+        if fit and new_text:
+            size = self.fit_size(page_no, span, new_text, font, size)[0]
         page = self.doc[page_no]
         page.add_redact_annot(self._text_band(span), fill=False)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
