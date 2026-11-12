@@ -11,6 +11,9 @@ Requisitos: Windows 10 ou 11 (64 bits).
 > que ainda não tem assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
 > O código é aberto e os arquivos podem ser conferidos pelo `SHA256SUMS.txt`.
 
+## Novidades da 1.5.1
+- Instalador e versão portátil cerca de 100 MB menores: ficaram de fora arquivos que o programa não usa (modelos de IA de layout do PyMuPDF, vídeo do OpenCV e o OpenGL por software do Qt).
+
 ## Novidades da 1.5.0
 - **Editar texto direto na página:** sem janela separada. Ao clicar no texto, uma caixa de edição aparece no lugar dele, com a fonte, o tamanho e a cor originais. Uma barra no topo troca a fonte, o tamanho e a cor. `Enter` ou um clique fora aplica e `Esc` cancela. Vale também para adicionar texto e para editar vários textos selecionados de uma vez (`Tab` passa para o próximo).
 - **Salvar sem janelas:** salvar nunca pergunta nada nem mostra mensagens. Documentos novos ou convertidos são gravados direto ao lado do original ou em Documentos. Unir, separar, extrair páginas, converter, OCR e salvar texto ou tradução também gravam direto e só informam na barra de status. Nenhum arquivo existente é apagado.

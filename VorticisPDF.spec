@@ -26,6 +26,18 @@ a = Analysis(
     excludes=EXCLUDES,
     noarchive=False,
 )
+
+# arquivos que não são usados pelo programa e só aumentam o instalador:
+# modelos de IA do pymupdf.layout (o hook novo passou a incluí-los), vídeo do OpenCV
+# (FFmpeg) e o OpenGL por software do Qt (a interface usa só QtWidgets).
+def _unused(dest):
+    d = dest.replace("\\", "/").lower()
+    return (d.startswith("pymupdf/layout") or d.startswith("pymupdf_layout")
+            or "opencv_videoio_ffmpeg" in d or d.endswith("opengl32sw.dll"))
+
+
+a.datas = [x for x in a.datas if not _unused(x[0])]
+a.binaries = [x for x in a.binaries if not _unused(x[0])]
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, [],
