@@ -223,6 +223,11 @@ class PageWidget(QWidget):
 
     def mousePressEvent(self, e):
         view = self.view
+        if view.inline is not None and not view.inline.done:
+            # clique fora da caixa de edição: aplica o texto digitado
+            view.inline.commit()
+            if view.tool not in (EDIT_TEXT, ADD_TEXT) or e.button() != Qt.LeftButton:
+                return
         if e.button() == Qt.RightButton:
             pt = self.to_pdf(e.position())
             ann = view.annot_at(self.index, pt) if view.tool in ANNOT_TOOLS else None
@@ -457,6 +462,7 @@ class PdfView(QScrollArea):
         self._render_queue: list[int] = []
         self.text_sel = None      # (página, início, fim) em índices de caractere
         self.sel_annot = None     # (página, xref, retângulo, tipo)
+        self.inline = None        # edição de texto na própria página (inline_edit.InlineSession)
         from .document import DEFAULT_STYLE
         self.shape_kind = "rect"
         self.shape_style = dict(DEFAULT_STYLE)
@@ -486,6 +492,8 @@ class PdfView(QScrollArea):
     # ---------------- documento ----------------
     def set_document(self, doc: pymupdf.Document | None, keep_position=True):
         old_page = self.current if keep_position else 0
+        if self.inline is not None:
+            self.inline.cancel()
         for w in self.pages:
             w.setParent(None)
             w.deleteLater()
@@ -583,6 +591,8 @@ class PdfView(QScrollArea):
         # tamanho calculado diretamente (não depende do sizeHint ainda não processado)
         self.container.setFixedSize(max(maxw + 2 * PAGE_GAP, self.viewport().width()), total + PAGE_GAP)
         self.layout_.activate()
+        if self.inline is not None and not self.inline.done:
+            self.inline.place_all()  # o zoom mudou: reposiciona as caixas de edição
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

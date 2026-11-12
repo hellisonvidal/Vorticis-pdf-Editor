@@ -42,9 +42,9 @@ Para desligar uma ferramenta, clique nela de novo ou pressione `Esc`.
 Ative **Seleção por retângulos** (`S`, primeiro botão da barra lateral):
 * **Desenhe um ou mais retângulos** sobre os textos. Todos os textos dentro deles ficam selecionados.
 * Clique num texto para incluí-lo ou retirá-lo, e clique fora dos textos para limpar a seleção. `Ctrl+A` seleciona todos os textos da página.
-* **Editar textos selecionados** (botão, `Enter` ou clique duplo) abre todos numa tabela para editar de uma vez:
-  * localizar e substituir em todos;
-  * trocar fonte, tamanho ou cor de todos ou manter os de cada um. Por padrão, cada texto mantém a sua fonte original;
+* **Editar textos selecionados** (botão, `Enter` ou clique duplo) abre uma caixa de edição **sobre cada texto, na própria página**, para editar todos de uma vez:
+  * `Tab` passa para o próximo texto; `Enter` ou um clique fora aplica; `Esc` cancela;
+  * a barra de edição tem localizar e substituir em todos e pode trocar fonte, tamanho ou cor de todos. Por padrão, cada texto mantém a sua fonte original;
   * cada texto é ajustado para não sobrepor linhas e marcações.
   * A edição inteira vira um único passo de desfazer.
 * A barra da seleção também permite copiar, destacar, sublinhar e excluir os textos selecionados.
@@ -69,7 +69,7 @@ Todas as formas continuam editáveis: clique para selecionar, arraste para mover
 ### Editar
 | Ferramenta | Atalho | O que faz |
 |---|---|---|
-| Editar texto | `E` | Passe o mouse sobre um texto para ver a fonte na barra de status e clique para editá-lo. **A fonte original é reconhecida e mantida** (veja abaixo) |
+| Editar texto | `E` | Passe o mouse sobre um texto para ver a fonte na barra de status e clique para editá-lo **direto na página**, sem janela separada. **A fonte original é reconhecida e mantida** (veja abaixo). `Enter` ou um clique fora aplica, `Esc` cancela |
 | Adicionar texto | `T` | Insere texto em qualquer ponto, com qualquer fonte instalada |
 | Destacar | `M` | Marca-texto sobre as palavras |
 | Apagar área | `W` | Remove definitivamente o conteúdo da área (redação) |
@@ -93,7 +93,7 @@ O editor de texto mostra a fonte detectada: nome, estilo, tamanho, cor, tipo e s
 * se o novo texto for maior que o espaço disponível (até o próximo texto, borda de célula, linha vertical ou margem), o tamanho da fonte é ajustado automaticamente para caber. Essa opção pode ser desligada;
 * ao adicionar texto num ponto já ocupado, o programa avisa antes de inserir.
 
-Todas as fontes instaladas entram na lista: `C:\Windows\Fonts`, as fontes do usuário e qualquer arquivo copiado para `%APPDATA%\Vorticis PDF Editor\fonts`. Também entram as 14 fontes padrão do PDF e as fontes CJK. A janela de edição mostra a fonte original e a fonte reconhecida, e você pode escolher outra. Em **Arquivo › Propriedades e fontes** aparece a lista das fontes do documento com a fonte correspondente no sistema.
+Todas as fontes instaladas entram na lista: `C:\Windows\Fonts`, as fontes do usuário e qualquer arquivo copiado para `%APPDATA%\Vorticis PDF Editor\fonts`. Também entram as 14 fontes padrão do PDF e as fontes CJK. Durante a edição, a barra de edição (no topo) permite escolher outra fonte, o tamanho e a cor, e a barra de status mostra a fonte original e a fonte usada. Em **Arquivo › Propriedades e fontes** aparece a lista das fontes do documento com a fonte correspondente no sistema.
 
 ### Organizar páginas
 * **Modo Organizar** (`F6`): miniaturas grandes em grade. Arraste para reordenar, use `Shift`/`Ctrl` para selecionar várias páginas e solte arquivos de fora para inseri-los na posição exata.
@@ -102,7 +102,13 @@ Todas as fontes instaladas entram na lista: `C:\Windows\Fonts`, as fontes do usu
 ### Unir, separar e imprimir
 * **Unir**: aceita PDFs, Word, Excel, PowerPoint, imagens e outros formatos, que são convertidos automaticamente. Arraste para definir a ordem e use **Adicionar pasta** para incluir todos os arquivos de uma pasta. Cada arquivo vira um marcador no PDF final.
 * **Separar**: uma página por arquivo, a cada N páginas, por intervalos (`1-3, 4, 5-`) ou ao meio. Funciona com vários PDFs de uma vez.
-* **Imprimir** (`Ctrl+P`) abre direto a janela de impressão do Windows. Nela ficam a escolha da impressora e o botão **Preferências/Propriedades**. Não há pré-visualização própria: o documento já está na tela.
+* **Imprimir** (`Ctrl+P`) abre uma janela de impressão **toda em português**, sem pré-visualização própria (o documento já está na tela):
+  * impressora e botão **Propriedades da impressora** (as opções do driver);
+  * páginas: todas, a atual, as selecionadas nas miniaturas ou um intervalo (`1-3, 5, 8-`); somente ímpares ou pares; ordem inversa;
+  * cópias, agrupadas ou não;
+  * orientação (automática, retrato ou paisagem), papel (A4, Carta, Ofício...), escala (ajustar à página, reduzir só as grandes, tamanho real ou personalizada) e **várias páginas por folha** (2, 4, 6, 9 ou 16);
+  * colorida ou em tons de cinza, qualidade (rascunho, normal ou alta) e se as anotações saem na impressão.
+  * As escolhas ficam guardadas para a próxima vez.
   * A impressão segue a ordem atual das páginas, e páginas em paisagem giram automaticamente.
   * **Sempre em uma face só.** O frente e verso é desativado mesmo que esteja marcado nas propriedades da impressora.
 
@@ -127,8 +133,9 @@ Se vários arquivos estiverem selecionados, o Vorticis junta todos numa única o
 > Essa opção ativa o menu completo do Windows (o mesmo de "Mostrar mais opções") diretamente, para todos os programas. Vale só para o seu usuário, não precisa de administrador e é desfeita ao desinstalar. Para aplicar, o Explorer é reiniciado uma vez.
 
 ### Informações de salvamento
-* **Salvar (`Ctrl+S`) um documento que já existe só atualiza o arquivo original, sem nenhuma mensagem.** O resultado aparece apenas na barra de status.
-* Ao salvar com um nome novo (Salvar como, documento novo ou convertido), uma janela mostra o arquivo, a data e a hora, o número de páginas, o tamanho antes e depois, a proteção por senha e a **lista de alterações feitas**.
+* **Salvar (`Ctrl+S`) nunca abre janela nem mostra mensagem:** um documento que já existe é atualizado no próprio arquivo. O resultado aparece apenas na barra de status.
+* Um documento novo ou convertido é gravado direto, sem perguntar: ao lado do arquivo de origem ou, se não houver, em **Documentos**. Nenhum arquivo existente é apagado; se o nome já existir, é usado `nome (2).pdf`. Os próximos salvamentos atualizam esse arquivo.
+* O mesmo vale para as funções da barra: unir, separar, extrair páginas, converter, OCR e salvar texto ou tradução gravam direto na pasta do documento e só informam na barra de status. Para escolher outro nome ou pasta, use **Arquivo › Salvar como**.
 * A barra de status indica quantas alterações ainda não foram salvas. Ao fechar, o programa pergunta se quer salvar e lista as alterações.
 * Os metadados do PDF são atualizados: data de modificação e produtor *Vorticis PDF Editor*.
 * **Arquivo › Histórico de salvamentos** guarda todos os salvamentos, uniões e separações. O histórico fica em `%APPDATA%\Vorticis PDF Editor\historico_salvamentos.jsonl`.
@@ -167,7 +174,7 @@ Use a ferramenta **Assinar** na barra lateral (`G`) e arraste a área onde o car
 * **Certificado A3:** token USB ou cartão inteligente, com PIN. O driver do fabricante é detectado automaticamente: SafeNet, Watchdata, GD/Valid, Oberthur, Feitian, Bit4id, OpenSC e outros. Também é possível indicar a `.dll` manualmente.
 * Segue o padrão **PAdES** (o mesmo usado pelo gov.br e pelo ITI). O carimbo visível mostra nome, CPF ou CNPJ lido do certificado ICP-Brasil, data e motivo. O motivo, o local e o contato podem ser preenchidos.
 * **Carimbo do tempo** opcional, por servidor gratuito, para comprovar a data da assinatura.
-* O arquivo original não é alterado, porque a assinatura é gravada num novo arquivo `_assinado.pdf`. Se você tentar salvar alterações sobre um PDF assinado, o programa avisa e oferece salvar uma cópia.
+* O arquivo original não é alterado, porque a assinatura é gravada num novo arquivo `_assinado.pdf`. Salvar alterações sobre um PDF assinado invalida a assinatura, e a barra de status avisa.
 * **Ferramentas › Verificar assinaturas digitais** mostra o signatário, o CPF ou CNPJ, a data e a integridade. Também mostra se o documento foi **alterado depois de assinado** e se o certificado é de uma autoridade confiável instalada no Windows.
 
 ### Tema escuro e idioma
@@ -207,8 +214,9 @@ vorticis_pdf/
   document.py          operações de PDF, desfazer/refazer, salvamento, unir/separar
   fonts.py             catálogo de fontes e reconhecimento automático
   converters.py        conversões entre formatos
-  dialogs.py           diálogos (texto, unir, separar, converter, salvamento, propriedades)
-  printing.py          impressão com pré-visualização
+  dialogs.py           diálogos (unir, separar, converter, histórico, propriedades)
+  inline_edit.py       edição de texto direto na página e barra de edição
+  printing.py          janela de impressão em português e impressão
   ocr.py               OCR (Tesseract embutido no PyMuPDF)
   translate.py         tradução de textos e de PDFs mantendo o layout
   signature.py         assinatura digital A1/A3 (pyHanko, PAdES) e verificação

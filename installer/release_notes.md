@@ -11,6 +11,12 @@ Requisitos: Windows 10 ou 11 (64 bits).
 > que ainda não tem assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
 > O código é aberto e os arquivos podem ser conferidos pelo `SHA256SUMS.txt`.
 
+## Novidades da 1.5.0
+- **Editar texto direto na página:** sem janela separada. Ao clicar no texto, uma caixa de edição aparece no lugar dele, com a fonte, o tamanho e a cor originais. Uma barra no topo troca a fonte, o tamanho e a cor. `Enter` ou um clique fora aplica e `Esc` cancela. Vale também para adicionar texto e para editar vários textos selecionados de uma vez (`Tab` passa para o próximo).
+- **Salvar sem janelas:** salvar nunca pergunta nada nem mostra mensagens. Documentos novos ou convertidos são gravados direto ao lado do original ou em Documentos. Unir, separar, extrair páginas, converter, OCR e salvar texto ou tradução também gravam direto e só informam na barra de status. Nenhum arquivo existente é apagado.
+- **Nova janela de impressão, toda em português:** impressora e propriedades do driver; páginas (todas, atual, selecionadas, intervalo, ímpares ou pares, ordem inversa); cópias agrupadas; orientação retrato ou paisagem; papel; escala; 2 a 16 páginas por folha; tons de cinza; qualidade. Continua sempre em uma face só.
+- **Ícone na barra de tarefas:** o ícone foi refeito num formato que todas as versões do Windows exibem, e os atalhos do instalador ficam ligados ao programa na barra de tarefas.
+
 ## Novidades da 1.4.0
 - **Impressão direta:** sem pré-visualização própria. Abre a janela de impressão do Windows, com o botão Preferências/Propriedades.
 - **Sempre em uma face:** nunca imprime frente e verso, mesmo que a opção esteja marcada nas propriedades da impressora.

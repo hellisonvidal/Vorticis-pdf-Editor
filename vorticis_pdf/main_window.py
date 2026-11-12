@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pymupdf
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSlider,
@@ -20,7 +20,7 @@ from . import viewer as V
 from .config import log_path, now_str, resource_path, settings
 from .dialogs import (
     ALL_SUPPORTED, PDF_FILTER, ConvertDialog, HistoryDialog, PagePreviewDialog,
-    PropertiesDialog, SaveInfoDialog, SplitDialog, TextDialog, about, open_folder,
+    PropertiesDialog, SplitDialog, about, open_folder,
 )
 from . import ocr
 from . import signature as sig
@@ -53,7 +53,8 @@ class MainWindow(QMainWindow):
         self.save_password: str | None = None
         self.search_index = 0
         self.settings = settings()
-        self.setWindowIcon(QIcon(resource_path("icon.ico")))
+        from .config import app_icon
+        self.setWindowIcon(app_icon())
         self.setAcceptDrops(True)
         self.resize(1360, 900)
 
@@ -275,7 +276,7 @@ class MainWindow(QMainWindow):
         self.a_save = A("Salvar", self.save, QKeySequence.Save, "save", "Salvar as alterações")
         self.a_save_as = A("Salvar como...", self.save_as, QKeySequence.SaveAs, "save_as")
         self.a_print = A("Imprimir...", lambda: self.print_pages(None), QKeySequence.Print, "print",
-                         "Imprimir na ordem atual das páginas, com pré-visualização")
+                         "Imprimir na ordem atual das páginas (impressora, cópias, papel, orientação, páginas por folha...)")
         self.a_props = A("Propriedades e fontes...", self.properties, "Ctrl+I", "info",
                          "Metadados, fontes do documento e senha")
         self.a_history = A("Histórico de salvamentos...", lambda: HistoryDialog(self).exec(), None, "history")
@@ -482,6 +483,11 @@ class MainWindow(QMainWindow):
 
         self._build_shape_bar()
         self._build_sel_bar()
+        from .inline_edit import TextEditBar
+        self.text_bar = TextEditBar(self)
+        self.addToolBar(Qt.TopToolBarArea, self.text_bar)
+        self.text_bar.applyRequested.connect(self.finish_inline)
+        self.text_bar.cancelRequested.connect(lambda: self.view.inline and self.view.inline.cancel())
 
         rail = QToolBar("Ferramentas")
         rail.setObjectName("ToolRail")
@@ -825,13 +831,38 @@ class MainWindow(QMainWindow):
     def save(self) -> bool:
         if not self.pdoc:
             return False
+        self.finish_inline()
         if not self.pdoc.path:
-            return self.save_as()
+            # documento novo/convertido: grava direto (sem janela) ao lado do original ou em Documentos
+            return self._do_save(self._auto_save_path())
         return self._do_save(self.pdoc.path)
+
+    def _doc_folder(self) -> Path:
+        from .config import documents_dir
+        if self.pdoc and self.pdoc.path:
+            return Path(self.pdoc.path).parent
+        conv_name = getattr(self, "_converted_name", "")
+        if conv_name and Path(conv_name).parent.is_dir() and str(Path(conv_name).parent) not in ("", "."):
+            return Path(conv_name).parent
+        return documents_dir()
+
+    def _auto_save_path(self) -> str:
+        from .config import unique_path
+        conv_name = getattr(self, "_converted_name", "")
+        name = Path(conv_name).name if conv_name else ""
+        if not name:
+            stem = Path(self.pdoc.title).stem if self.pdoc and self.pdoc.title else ""
+            name = (stem if stem and stem.lower() not in ("sem título", "sem titulo") else "Novo documento") + ".pdf"
+        if not name.lower().endswith(".pdf"):
+            name = Path(name).stem + ".pdf"
+        folder = self._doc_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        return unique_path(folder / name)
 
     def save_as(self) -> bool:
         if not self.pdoc:
             return False
+        self.finish_inline()
         suggestion = self.pdoc.path or getattr(self, "_converted_name", "") or \
             str(Path(self.settings.value("last_dir", str(Path.home()))) / "documento.pdf")
         path, _ = QFileDialog.getSaveFileName(self, "Salvar como", suggestion, PDF_FILTER)
@@ -842,8 +873,8 @@ class MainWindow(QMainWindow):
         return self._do_save(path)
 
     def _do_save(self, path) -> bool:
-        """Salvar sobre o próprio arquivo apenas o atualiza, sem nenhuma mensagem; em
-        "Salvar como" (arquivo novo) mostra as informações de salvamento."""
+        """Grava sem nenhuma janela ou mensagem: só a barra de status mostra que foi salvo
+        (o histórico de salvamentos continua registrando tudo)."""
         same_file = bool(self.pdoc.path) and os.path.abspath(path) == os.path.abspath(self.pdoc.path)
         had_signature = same_file and sig.has_signatures(path)
         try:
@@ -858,17 +889,13 @@ class MainWindow(QMainWindow):
             badge += " • as assinaturas digitais anteriores deixaram de valer"
         self._set_saved_badge(badge)
         self._update_state()
-        if not same_file and self.settings.value("show_save_info", True, type=bool):
-            SaveInfoDialog(self, info).exec()
         return True
 
     def export_current(self):
         if not self.pdoc:
             return
-        if self.pdoc.modified or not self.pdoc.path:
-            QMessageBox.information(self, APP_NAME, "Salve o documento antes de exportar.")
-            if not self.save():
-                return
+        if (self.pdoc.modified or not self.pdoc.path) and not self.save():
+            return
         ConvertDialog(self, [self.pdoc.path], to_pdf=False).exec()
 
     def _add_recent(self, path):
@@ -904,7 +931,13 @@ class MainWindow(QMainWindow):
     def print_pages(self, rows):
         if not self.pdoc:
             return
-        print_document(self, self.pdoc.doc, rows)
+        self.finish_inline()
+        if rows is None:
+            rows = self.thumbs.selected_rows()
+        try:
+            print_document(self, self.pdoc.doc, rows, current=self.view.current)
+        except Exception as e:
+            QMessageBox.critical(self, APP_NAME, f"Não foi possível imprimir:\n{e}")
 
     # ================================================================== editar
     def undo(self):
@@ -925,6 +958,7 @@ class MainWindow(QMainWindow):
 
     def set_tool(self, key):
         """key = V.BROWSE desliga todas as ferramentas (modo padrão)."""
+        self.finish_inline()
         if key in self.tool_actions:
             self.tool_actions[key].setChecked(True)
         else:
@@ -940,27 +974,70 @@ class MainWindow(QMainWindow):
             self.a_organize.setChecked(False)
             self.toggle_organize()
 
-    # ---------- vários textos (ferramenta Seleção por retângulos) ----------
-    def edit_selected_texts(self):
-        from .dialogs import MultiTextDialog
-        items = list(self.view.sel_items)
-        if not items or not self.pdoc:
+    # ---------- edição de texto direto na página ----------
+    def start_inline(self, items=None, add_at=None):
+        """Abre caixas de edição sobre os textos (ou no ponto clicado, para texto novo)."""
+        from .inline_edit import InlineSession
+        if not self.pdoc:
             return
-        dlg = MultiTextDialog(self, self.pdoc, items)
-        if not dlg.exec():
+        self.finish_inline()
+        s = InlineSession(self.view, self.pdoc, items, add_at,
+                          default_size=float(self.settings.value("add_text_size", 12)))
+        if not s.fields:
             return
-        changes = dlg.values()
-        if not changes:
+        self.view.inline = s
+        s.finished.connect(self._inline_finished)
+        # a barra de formatação ocupa o lugar das barras da seleção/formas enquanto edita
+        self._bars_before = [b for b in (self.sel_bar, self.shape_bar) if b.isVisible()]
+        for b in self._bars_before:
+            b.hide()
+        self.text_bar.bind(s)
+
+    def finish_inline(self):
+        """Aplica a edição em andamento (antes de salvar, imprimir, trocar de ferramenta...)."""
+        if self.view.inline is not None and not self.view.inline.done:
+            self.view.inline.commit()
+
+    def _inline_finished(self, changes, _apply):
+        self.text_bar.unbind()
+        self.view.inline = None
+        for b in getattr(self, "_bars_before", []):
+            b.setVisible(True)
+        self._bars_before = []
+        if not changes or not self.pdoc:
             return
+        edits = [c for c in changes if c["span"] is not None]
+        adds = [c for c in changes if c["span"] is None]
+        fit = self.text_bar.fit.isChecked()
         pages = sorted({c["page"] for c in changes})
         try:
-            n = self.pdoc.replace_texts(changes, fit=dlg.fit.isChecked())
+            if len(edits) == 1:
+                c = edits[0]
+                used = self.pdoc.replace_text(c["page"], c["span"], c["text"], c["font"], c["size"],
+                                              c["color"], fit=fit)
+                extra = f" (ajustado para {used:.1f} pt)" if used < c["size"] - 0.05 else ""
+                msg = f"Texto editado com a fonte {c['font'].label}{extra}"
+            elif edits:
+                n = self.pdoc.replace_texts(edits, fit=fit)
+                msg = f"{n} texto(s) editado(s) de uma só vez"
+            for c in adds:
+                self.pdoc.add_text(c["page"], (c["origin"][0], c["origin"][1] + c["size"] * 0.8),
+                                   c["text"], c["font"], c["size"], c["color"])
+                self.settings.setValue("add_text_size", c["size"])
+                msg = f"Texto adicionado com a fonte {c['font'].label}"
         except Exception as e:
-            QMessageBox.critical(self, APP_NAME, f"Não foi possível editar os textos:\n{e}")
+            QMessageBox.critical(self, APP_NAME, f"Não foi possível editar o texto:\n{e}")
             return
-        self.view.clear_rect_selection()
+        if self.view.tool == V.SELECT:
+            self.view.clear_rect_selection()
         self.refresh(pages=pages)
-        self.statusBar().showMessage(f"{n} texto(s) editado(s) de uma só vez", 5000)
+        self.statusBar().showMessage(msg, 5000)
+
+    # ---------- vários textos (ferramenta Seleção por retângulos) ----------
+    def edit_selected_texts(self):
+        items = list(self.view.sel_items)
+        if items:
+            self.start_inline(items)
 
     def delete_selected_texts(self):
         items = list(self.view.sel_items)
@@ -984,26 +1061,10 @@ class MainWindow(QMainWindow):
         self.refresh(pages=list(by_page))
 
     def edit_text(self, page_no, span):
-        dlg = TextDialog(self, self.pdoc, page_no, span)
-        if not dlg.exec():
-            return
-        text, font, size, color, fit = dlg.values()
-        try:
-            used = self.pdoc.replace_text(page_no, span, text, font, size, color, fit=fit)
-        except Exception as e:
-            QMessageBox.critical(self, APP_NAME, f"Não foi possível editar o texto:\n{e}")
-            return
-        self.refresh(pages=[page_no])
-        extra = f" (ajustado para {used:.1f} pt)" if used < size - 0.05 else ""
-        self.statusBar().showMessage(f"Texto editado com a fonte {font.label}{extra}", 5000)
+        self.start_inline([(page_no, span)])
 
     def add_text(self, page_no, pt):
-        dlg = TextDialog(self, self.pdoc, page_no, None, origin=pt)
-        if dlg.exec():
-            text, font, size, color, _fit = dlg.values()
-            if text.strip():
-                self.pdoc.add_text(page_no, (pt[0], pt[1] + size * 0.8), text, font, size, color)
-                self.refresh(pages=[page_no])
+        self.start_inline(None, add_at=(page_no, pt))
 
     def add_note(self, page_no, pt):
         text, ok = QInputDialog.getMultiLineText(self, "Nota", "Comentário:")
@@ -1163,27 +1224,23 @@ class MainWindow(QMainWindow):
         run_task(self, "Preparando arquivos...", work, on_done=done)
 
     def extract_pages(self, rows):
-        base = Path(self.pdoc.path or "documento.pdf")
+        from .config import unique_path
+        stem = Path(self.pdoc.title).stem
         label = f"{rows[0] + 1}" if len(rows) == 1 else f"{rows[0] + 1}-{rows[-1] + 1}"
-        path, _ = QFileDialog.getSaveFileName(self, "Extrair páginas",
-                                              str(base.with_name(f"{base.stem}_pag{label}.pdf")), PDF_FILTER)
-        if not path:
-            return
+        path = unique_path(self._doc_folder() / f"{stem}_pag{label}.pdf")
         out = PdfDocument(doc=self.pdoc.extract(rows))
         out.edits = [f"Extraiu {len(rows)} página(s) de {self.pdoc.title}"]
-        SaveInfoDialog(self, out.save(path), "Páginas extraídas").exec()
+        out.save(path)
+        self.statusBar().showMessage(f"✔ Páginas extraídas para {path}", 8000)
 
     def split_at(self, row):
         if row == 0:
             QMessageBox.information(self, APP_NAME, "Escolha uma página depois da primeira.")
             return
-        base = Path(self.pdoc.path or "documento.pdf")
-        d = QFileDialog.getExistingDirectory(self, "Pasta para salvar as duas partes", str(base.parent))
-        if not d:
-            return
         n = self.pdoc.page_count
-        files = split_document(self.pdoc.doc, [list(range(row)), list(range(row, n))], d, base.stem)
-        QMessageBox.information(self, APP_NAME, "Criados:\n" + "\n".join(files))
+        files = split_document(self.pdoc.doc, [list(range(row)), list(range(row, n))],
+                               str(self._doc_folder()), Path(self.pdoc.title).stem)
+        self.statusBar().showMessage("✔ Separado em: " + " • ".join(Path(f).name for f in files), 8000)
 
     def split_current(self):
         if not self.pdoc:
@@ -1293,6 +1350,7 @@ class MainWindow(QMainWindow):
         if not text:
             return
         dlg = TextResultDialog(self, "Traduzir seleção", text, Path(self.pdoc.title).stem)
+        dlg.folder = self._doc_folder()
         dlg._translate()
         dlg.exec()
 
@@ -1344,11 +1402,11 @@ class MainWindow(QMainWindow):
             def done(res):
                 self.refresh(pages=pages)
                 done_pages = res["paginas_ocr"]
-                msg = (f"OCR concluído: {len(done_pages)} página(s) agora pesquisáveis "
-                       f"({res['palavras']} palavras reconhecidas).")
+                msg = (f"✔ OCR concluído: {len(done_pages)} página(s) agora pesquisáveis "
+                       f"({res['palavras']} palavras reconhecidas)")
                 if res["paginas_com_texto"]:
-                    msg += f"\n{len(res['paginas_com_texto'])} página(s) já tinham texto e foram mantidas."
-                QMessageBox.information(self, APP_NAME, msg + "\n\nSalve o documento para manter o resultado.")
+                    msg += f" • {len(res['paginas_com_texto'])} já tinham texto e foram mantidas"
+                self.statusBar().showMessage(msg, 10000)
 
             def failed(msg):
                 self.pdoc.undo()  # descarta o ponto de restauração criado para o OCR
@@ -1361,7 +1419,9 @@ class MainWindow(QMainWindow):
             def done_text(items):
                 text = "\n\n".join(f"──── Página {n}{' (OCR)' if was_ocr else ''} ────\n{t.strip()}"
                                     for n, t, was_ocr in items)
-                TextResultDialog(self, "Texto reconhecido", text, Path(self.pdoc.title).stem).exec()
+                d = TextResultDialog(self, "Texto reconhecido", text, Path(self.pdoc.title).stem)
+                d.folder = self._doc_folder()
+                d.exec()
 
             run_task(self, "Reconhecendo texto (OCR)...", ocr.extract_text, self.pdoc.doc, pages, langs,
                      dpi, skip, on_done=done_text, with_progress=True)
@@ -1390,6 +1450,7 @@ class MainWindow(QMainWindow):
         else:
             text = "\n\n".join(self.pdoc.doc[p].get_text("text", sort=True).strip() for p in pages)
             dlg2 = TextResultDialog(self, "Tradução", text, stem)
+            dlg2.folder = self._doc_folder()
             dlg2.lang.setCurrentIndex(max(0, dlg2.lang.findData(target)))
             run_task(self, "Traduzindo...", tr.translate_text, text, target, source,
                      on_done=lambda t: (dlg2.dst.setPlainText(t), dlg2.exec()), with_progress=True)
@@ -1397,8 +1458,7 @@ class MainWindow(QMainWindow):
     # ================================================================== assinatura digital
     def _require_saved_pdf(self, action="assinar") -> bool:
         if self.pdoc.modified or not self.pdoc.path or not self.pdoc.is_native_pdf():
-            r = QMessageBox.question(self, APP_NAME, f"Para {action}, o documento precisa estar salvo. Salvar agora?")
-            if r != QMessageBox.Yes or not self.save():
+            if not self.save():  # salva direto, sem perguntar
                 return False
         return True
 
@@ -1416,15 +1476,12 @@ class MainWindow(QMainWindow):
 
         def done(info):
             doc_id = f"CPF {info['cpf']}" if info.get("cpf") else (f"CNPJ {info['cnpj']}" if info.get("cnpj") else "")
-            QMessageBox.information(
-                self, APP_NAME, f"✔ Documento assinado digitalmente.\n\nSignatário: {info['signatario']}"
-                f"{' — ' + doc_id if doc_id else ''}\nCarimbo do tempo: {'sim' if info['carimbo_tempo'] else 'não'}"
-                f"\nArquivo: {out}\n\nNão edite o PDF assinado: qualquer alteração invalida a assinatura.")
             from .config import log_save
             log_save({"arquivo": out, "data_hora": now_str(), "paginas": self.pdoc.page_count,
                       "alteracoes": [f"Assinado digitalmente por {info['signatario']}"]})
             self.set_tool(V.BROWSE)
             self.load(out)
+            self._set_saved_badge(f"✔ Assinado por {info['signatario']}{' — ' + doc_id if doc_id else ''} • {out}")
 
         run_task(self, "Assinando...", sig.sign_pdf, self.pdoc.path, out, on_done=done, **params, **kw)
 
@@ -1540,6 +1597,7 @@ class MainWindow(QMainWindow):
             super().keyPressEvent(e)
 
     def closeEvent(self, e):
+        self.finish_inline()
         if not self.maybe_save():
             e.ignore()
             return

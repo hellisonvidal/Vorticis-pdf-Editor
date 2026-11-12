@@ -11,10 +11,10 @@ import pymupdf
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QCompleter,
-    QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout,
+    QAbstractItemView, QButtonGroup, QCheckBox, QColorDialog, QComboBox,
+    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+    QMessageBox, QPushButton, QRadioButton, QScrollArea,
     QSlider, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -23,8 +23,7 @@ from . import APP_NAME, __version__
 from . import converters as conv
 from .config import human_size, read_history
 from .document import merge_files, split_document, split_groups
-from .fonts import (all_font_labels, catalog, describe_span, font_from_choice, missing_glyphs,
-                    qt_family, resolve_font, strip_subset)
+from .fonts import catalog, strip_subset
 from .tasks import run_task
 from .theme import c as tc
 from .viewer import render_page
@@ -74,354 +73,9 @@ def int_to_rgb(color: int):
     return (((color >> 16) & 255) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255)
 
 
-SOURCE_TEXT = {
-    "embutida": ("✔ Fonte original do documento (embutida no PDF)", "ok"),
-    "sistema": ("✔ Mesma fonte, instalada no computador", "ok"),
-    "similar": ("≈ Fonte equivalente instalada (métricas compatíveis)", "warn"),
-    "padrão": ("⚠ Fonte original indisponível — usando a fonte padrão mais próxima", "accent_text"),
-}
 
 
-class TextDialog(QDialog):
-    """Editar um trecho existente (fonte original reconhecida e exibida) ou adicionar texto."""
-
-    def __init__(self, parent, pdoc, page_no: int, span: dict | None = None, origin=None):
-        super().__init__(parent)
-        self.pdoc, self.page_no, self.span, self.origin = pdoc, page_no, span, origin
-        self.doc = pdoc.doc
-        self.page = self.doc[page_no]
-        self.setWindowTitle("Editar texto" if span else "Adicionar texto")
-        self.setMinimumWidth(620)
-        lay = QVBoxLayout(self)
-        lay.setSpacing(10)
-        self.pdf_font = span["font"] if span else "Helvetica"
-        self.flags = span["flags"] if span else 0
-        self.orig_text = span["text"] if span else ""
-        self.detected = resolve_font(self.doc, self.page, self.pdf_font, self.flags, self.orig_text or "Aa")
-
-        # ---- cartão com a fonte original
-        if span:
-            info = describe_span(self.doc, self.page, span)
-            style = ", ".join(x for x, on in (("Negrito", info["negrito"]), ("Itálico", info["italico"]),
-                                               ("Serifada", info["serifa"]), ("Monoespaçada", info["mono"])) if on) or "Normal"
-            emb = ("Sim (subconjunto)" if info["subconjunto"] else "Sim") if info["embutida"] else "Não"
-            card = QGroupBox("Fonte detectada no documento")
-            g = QGridLayout(card)
-            rows = [("Fonte", f"<b>{info['nome']}</b>"), ("Estilo", style),
-                    ("Tamanho", f"{info['tamanho']:.1f} pt"),
-                    ("Cor", f"<span style='color:{info['cor']}'>■</span> {info['cor']}"),
-                    ("Tipo", info["tipo"] or "—"), ("Embutida no PDF", emb)]
-            for i, (k, v) in enumerate(rows):
-                lk = QLabel(k + ":")
-                lk.setObjectName("Muted")
-                lv = QLabel(v)
-                lv.setTextInteractionFlags(Qt.TextSelectableByMouse)
-                g.addWidget(lk, i // 2, (i % 2) * 2)
-                g.addWidget(lv, i // 2, (i % 2) * 2 + 1)
-            self.source_lbl = QLabel()
-            self.source_lbl.setWordWrap(True)
-            g.addWidget(self.source_lbl, 3, 0, 1, 4)
-            lay.addWidget(card)
-        else:
-            self.source_lbl = QLabel()
-            lay.addWidget(QLabel("O texto será inserido no ponto clicado. Use \u21b5 para várias linhas."))
-
-        hint = QLabel("<b>Texto</b>" + (f"  <span style='color:{tc('muted')}'>— uma linha; ajustado ao espaço "
-                                        "disponível para não sobrepor linhas e marcações</span>" if span else ""))
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
-        self.edit = QPlainTextEdit(self.orig_text)
-        self.edit.setFixedHeight(80 if span else 120)
-        lay.addWidget(self.edit)
-
-        form = QFormLayout()
-        self.font_combo = QComboBox()
-        self.font_combo.setEditable(True)
-        self.font_combo.setInsertPolicy(QComboBox.NoInsert)
-        labels = all_font_labels()
-        tag = "fonte original" if span else "padrão"
-        self.font_combo.addItem(f"★ {self.detected.label}  ({tag})", "__detected__")
-        for lbl in labels:
-            self.font_combo.addItem(lbl, lbl)
-        comp = QCompleter([self.font_combo.itemText(i) for i in range(self.font_combo.count())], self)
-        comp.setCaseSensitivity(Qt.CaseInsensitive)
-        comp.setFilterMode(Qt.MatchContains)
-        self.font_combo.setCompleter(comp)
-        form.addRow(f"Fonte ({len(labels)} disponíveis):", self.font_combo)
-        self.size = QDoubleSpinBox(minimum=2, maximum=400, decimals=1, suffix=" pt")
-        self.size.setValue(span["size"] if span else 12)
-        form.addRow("Tamanho:", self.size)
-        self.color = ColorButton(int_to_rgb(span["color"]) if span else (0, 0, 0))
-        form.addRow("Cor:", self.color)
-        self.fit = QCheckBox("Ajustar o tamanho automaticamente para não ultrapassar o espaço do texto original")
-        self.fit.setChecked(True)
-        if span:
-            form.addRow(self.fit)
-        lay.addLayout(form)
-
-        lay.addWidget(QLabel("<b>Prévia</b>"))
-        self.preview = QLabel()
-        self.preview.setMinimumHeight(54)
-        lay.addWidget(self.preview)
-        self.warn = QLabel()
-        self.warn.setWordWrap(True)
-        lay.addWidget(self.warn)
-
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Aplicar")
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-        self.edit.textChanged.connect(self._update)
-        self.font_combo.currentIndexChanged.connect(self._update)
-        self.size.valueChanged.connect(self._update)
-        self.fit.toggled.connect(self._update)
-        self.color.changed = self._update
-        self._update()
-        self.edit.setFocus()
-        self.edit.selectAll()
-
-    def _chosen_font(self, text):
-        data = self.font_combo.currentData()
-        if data is None:
-            txt = self.font_combo.currentText().replace("★", "").strip()
-            idx = self.font_combo.findText(txt, Qt.MatchContains)
-            data = self.font_combo.itemData(idx) if idx >= 0 else "__detected__"
-        if data != "__detected__":
-            return font_from_choice(data)
-        font = self.detected
-        if self.span and missing_glyphs(font, text):
-            # a fonte embutida (subconjunto) não tem os novos caracteres: procura a mesma fonte instalada
-            font = resolve_font(self.doc, self.page, self.pdf_font, self.flags, text)
-        return font
-
-    def _update(self):
-        text = self.edit.toPlainText()
-        if self.span:
-            text = " ".join(text.split("\n"))
-        font = self._chosen_font(text or "Aa")
-        self._font = font
-        msg, color = SOURCE_TEXT.get(font.source, ("", "text"))
-        if self.font_combo.currentData() not in ("__detected__", None):
-            msg, color = (f"Fonte escolhida manualmente: {font.label}", "text")
-        color = tc(color)
-        self.source_lbl.setText(f"<span style='color:{color}'><b>Será usada:</b> {font.label} — {msg}</span>")
-        size = self.size.value()
-        warns = []
-        miss = missing_glyphs(font, text)
-        if miss:
-            warns.append("⚠ Caracteres sem desenho nesta fonte: " + " ".join(miss[:12]))
-        self._final_size = size
-        if self.span and text:
-            fitted, need, avail = self.pdoc.fit_size(self.page_no, self.span, text, font, size)
-            if fitted < size:
-                if self.fit.isChecked():
-                    self._final_size = fitted
-                    warns.append(f"ℹ O texto é maior que o espaço disponível ({avail:.0f} pt). "
-                                 f"Tamanho ajustado para {fitted:.1f} pt para não sobrepor o conteúdo ao lado.")
-                else:
-                    warns.append("⚠ O texto ultrapassa o espaço do original e pode sobrepor linhas ou marcações.")
-        elif not self.span and text and self.origin is not None:
-            r = self.pdoc.text_rect((self.origin[0], self.origin[1] + size * 0.8), text, font, size)
-            n = self.pdoc.collisions(self.page_no, r)
-            if n:
-                warns.append(f"⚠ Neste ponto o texto ficará sobre {n} elemento(s) existente(s) "
-                             "(texto, linhas ou marcações). Clique em outro lugar se preferir.")
-        self.warn.setText("<br>".join(f"<span style='color:{tc('warn')}'>{w}</span>" for w in warns))
-        fam = qt_family(font) or "Arial"
-        bold = font.base14 in ("hebo", "tibo", "cobo", "hebi", "tibi", "cobi") or \
-            any(w in font.label.lower() for w in ("bold", "negrito", "black", "heavy"))
-        italic = font.base14 in ("heit", "tiit", "coit", "hebi", "tibi", "cobi") or \
-            any(w in font.label.lower() for w in ("italic", "oblique", "itálico"))
-        pt = max(7.0, min(28.0, self._final_size * 1.3))
-        # a prévia usa estilo próprio (o tema global definiria outra fonte)
-        self.preview.setStyleSheet(
-            f"background:white;border:1px solid {tc('border')};border-radius:8px;padding:8px;"
-            f"font-family:'{fam}';font-size:{pt:.1f}pt;font-weight:{700 if bold else 400};"
-            f"font-style:{'italic' if italic else 'normal'};"
-            f"color:{QColor.fromRgbF(*self.color.rgb).name()}")
-        self.preview.setText(text.split("\n")[0][:120] or " ")
-
-    def values(self):
-        """(texto, fonte, tamanho final, cor, ajustar)."""
-        self._update()
-        return self.edit.toPlainText(), self._font, self.size.value(), self.color.rgb, self.fit.isChecked()
-
-
-class MultiTextDialog(QDialog):
-    """Edição simultânea de vários textos selecionados com a ferramenta Seleção."""
-
-    COL_PAGE, COL_ORIG, COL_NEW, COL_FONT = range(4)
-
-    def __init__(self, parent, pdoc, items: list[tuple[int, dict]]):
-        super().__init__(parent)
-        self.pdoc, self.items = pdoc, items
-        self.setWindowTitle(f"Editar {len(items)} texto(s) selecionado(s)")
-        self.resize(940, 620)
-        lay = QVBoxLayout(self)
-        intro = QLabel("Edite os textos na coluna <b>Novo texto</b>. Cada texto mantém a sua fonte "
-                       "original, e o tamanho é ajustado para não sobrepor linhas e marcações.")
-        intro.setWordWrap(True)
-        lay.addWidget(intro)
-
-        fr = QHBoxLayout()
-        self.find = QLineEdit()
-        self.find.setPlaceholderText("localizar em todos os textos selecionados")
-        self.repl = QLineEdit()
-        self.repl.setPlaceholderText("substituir por")
-        self.case = QCheckBox("Diferenciar maiúsculas")
-        b = QPushButton("Substituir em todos")
-        b.clicked.connect(self._replace_all)
-        fr.addWidget(QLabel("Localizar:"))
-        fr.addWidget(self.find, 2)
-        fr.addWidget(QLabel("por:"))
-        fr.addWidget(self.repl, 2)
-        fr.addWidget(self.case)
-        fr.addWidget(b)
-        lay.addLayout(fr)
-
-        self.table = QTableWidget(len(items), 4)
-        self.table.setHorizontalHeaderLabels(["Pág.", "Texto original", "Novo texto", "Fonte original"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.AllEditTriggers)
-        for r, (pg, sp) in enumerate(items):
-            vals = [str(pg + 1), sp["text"], sp["text"],
-                    f"{strip_subset(sp['font'])} • {sp['size']:.1f} pt"]
-            for c, v in enumerate(vals):
-                it = QTableWidgetItem(v)
-                if c != self.COL_NEW:
-                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
-                    if c == self.COL_ORIG:
-                        it.setForeground(QColor(tc("muted")))
-                self.table.setItem(r, c, it)
-        hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(self.COL_PAGE, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(self.COL_ORIG, QHeaderView.Stretch)
-        hh.setSectionResizeMode(self.COL_NEW, QHeaderView.Stretch)
-        hh.setSectionResizeMode(self.COL_FONT, QHeaderView.ResizeToContents)
-        lay.addWidget(self.table, 1)
-
-        box = QGroupBox("Aplicar a todos os textos selecionados")
-        g = QGridLayout(box)
-        self.font_combo = QComboBox()
-        self.font_combo.setEditable(True)
-        self.font_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.font_combo.addItem("★ Manter a fonte original de cada texto", "__keep__")
-        for lbl in all_font_labels():
-            self.font_combo.addItem(lbl, lbl)
-        comp = QCompleter([self.font_combo.itemText(i) for i in range(self.font_combo.count())], self)
-        comp.setCaseSensitivity(Qt.CaseInsensitive)
-        comp.setFilterMode(Qt.MatchContains)
-        self.font_combo.setCompleter(comp)
-        g.addWidget(QLabel("Fonte:"), 0, 0)
-        g.addWidget(self.font_combo, 0, 1, 1, 3)
-        self.keep_size = QCheckBox("Manter o tamanho original")
-        self.keep_size.setChecked(True)
-        self.size = QDoubleSpinBox(minimum=2, maximum=400, decimals=1, suffix=" pt")
-        self.size.setValue(items[0][1]["size"] if items else 12)
-        self.size.setEnabled(False)
-        self.keep_size.toggled.connect(lambda on: self.size.setEnabled(not on))
-        g.addWidget(self.keep_size, 1, 0, 1, 2)
-        g.addWidget(self.size, 1, 2)
-        self.keep_color = QCheckBox("Manter a cor original")
-        self.keep_color.setChecked(True)
-        self.color = ColorButton(int_to_rgb(items[0][1]["color"]) if items else (0, 0, 0))
-        self.color.setEnabled(False)
-        self.keep_color.toggled.connect(lambda on: self.color.setEnabled(not on))
-        g.addWidget(self.keep_color, 2, 0, 1, 2)
-        g.addWidget(self.color, 2, 2)
-        self.fit = QCheckBox("Ajustar o tamanho automaticamente para não ultrapassar o espaço de cada texto")
-        self.fit.setChecked(True)
-        g.addWidget(self.fit, 3, 0, 1, 4)
-        lay.addWidget(box)
-
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Aplicar")
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def _replace_all(self):
-        import re
-        needle = self.find.text()
-        if not needle:
-            return
-        flags = 0 if self.case.isChecked() else re.IGNORECASE
-        pat = re.compile(re.escape(needle), flags)
-        n = 0
-        for r in range(self.table.rowCount()):
-            it = self.table.item(r, self.COL_NEW)
-            new, k = pat.subn(self.repl.text().replace("\\", "\\\\"), it.text())
-            if k:
-                it.setText(new)
-                n += k
-        self.find.setStyleSheet("" if n else f"border:1px solid {tc('accent')}")
-        self.setWindowTitle(f"Editar {len(self.items)} texto(s) — {n} substituição(ões)")
-
-    def values(self) -> list[dict]:
-        """Itens para PdfDocument.replace_texts (só os que mudam)."""
-        doc = self.pdoc.doc
-        choice = self.font_combo.currentData()
-        if choice is None:  # digitado
-            idx = self.font_combo.findText(self.font_combo.currentText().replace("★", "").strip(),
-                                           Qt.MatchContains)
-            choice = self.font_combo.itemData(idx) if idx >= 0 else "__keep__"
-        common_font = None if choice == "__keep__" else font_from_choice(choice)
-        out = []
-        for r, (pg, sp) in enumerate(self.items):
-            text = self.table.item(r, self.COL_NEW).text()
-            style_changed = common_font is not None or not self.keep_size.isChecked() or \
-                not self.keep_color.isChecked()
-            if text == sp["text"] and not style_changed:
-                continue
-            font = common_font
-            if font is None:
-                page = doc[pg]
-                font = resolve_font(doc, page, sp["font"], sp["flags"], text or "Aa")
-            out.append({"page": pg, "span": sp, "text": text, "font": font,
-                        "size": sp["size"] if self.keep_size.isChecked() else self.size.value(),
-                        "color": int_to_rgb(sp["color"]) if self.keep_color.isChecked() else self.color.rgb})
-        return out
-
-
-# ====================================================================== informações de salvamento
-class SaveInfoDialog(QDialog):
-    def __init__(self, parent, info: dict, title="Documento salvo com sucesso"):
-        super().__init__(parent)
-        self.setWindowTitle(APP_NAME + " — Informações de salvamento")
-        self.setMinimumWidth(560)
-        lay = QVBoxLayout(self)
-        head = QLabel(f"<h3 style='color:{tc('ok')}'>✔ {title}</h3>")
-        lay.addWidget(head)
-        rows = [("Arquivo", info.get("arquivo", "")), ("Data/hora", info.get("data_hora", "")),
-                ("Páginas", str(info.get("paginas", ""))),
-                ("Tamanho anterior", info.get("tamanho_anterior", "—")),
-                ("Tamanho atual", info.get("tamanho_atual", "—")),
-                ("Protegido por senha", "Sim" if info.get("protegido_senha") else "Não"),
-                ("Gravado por", info.get("produtor", f"{APP_NAME} {__version__}"))]
-        grid = QFormLayout()
-        for k, v in rows:
-            lbl = QLabel(v)
-            lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            lbl.setWordWrap(True)
-            grid.addRow(f"<b>{k}:</b>", lbl)
-        lay.addLayout(grid)
-        lay.addWidget(QLabel("<b>Alterações registradas:</b>"))
-        lst = QListWidget()
-        lst.addItems(info.get("alteracoes", []))
-        lst.setMaximumHeight(160)
-        lay.addWidget(lst)
-        lay.addWidget(QLabel("<small>Estas informações também ficam no histórico "
-                             "(Arquivo ▸ Histórico de salvamentos) e nos metadados do PDF.</small>"))
-        bb = QDialogButtonBox(QDialogButtonBox.Ok)
-        folder = bb.addButton("Abrir pasta", QDialogButtonBox.ActionRole)
-        folder.clicked.connect(lambda: open_folder(info.get("arquivo", "")))
-        bb.accepted.connect(self.accept)
-        lay.addWidget(bb)
-
-
+# ====================================================================== histórico de salvamentos
 class HistoryDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -646,6 +300,16 @@ class FileList(QListWidget):
             super().dropEvent(e)
 
 
+def _status(win, text) -> bool:
+    """Mostra o resultado na barra de status da janela principal, sem janela de mensagem.
+    Devolve False quando não há janela principal (ação aberta pelo botão direito do Explorer)."""
+    if win is None or not hasattr(win, "statusBar"):
+        return False
+    if text:
+        win.statusBar().showMessage(text, 10000)
+    return True
+
+
 def file_buttons(parent, flist: FileList, filt):
     box = QVBoxLayout()
 
@@ -712,7 +376,7 @@ class MergeDialog(QDialog):
         self.open_after.setChecked(True)
         lay.addWidget(self.open_after)
         bb = QDialogButtonBox(QDialogButtonBox.Cancel)
-        go = bb.addButton("Unir e salvar...", QDialogButtonBox.AcceptRole)
+        go = bb.addButton("Unir", QDialogButtonBox.AcceptRole)
         go.setDefault(True)
         bb.accepted.connect(self._merge)
         bb.rejected.connect(self.reject)
@@ -723,11 +387,10 @@ class MergeDialog(QDialog):
         if len(files) < 1:
             QMessageBox.warning(self, APP_NAME, "Adicione pelo menos um arquivo.")
             return
+        from .config import unique_path
         first = Path(files[0])
-        out, _ = QFileDialog.getSaveFileName(self, "Salvar PDF unido",
-                                             str(first.with_name(first.stem + "_unido.pdf")), PDF_FILTER)
-        if not out:
-            return
+        # salva direto ao lado do primeiro arquivo, sem perguntar (nunca sobrescreve outro arquivo)
+        out = unique_path(first.with_name(first.stem + "_unido.pdf"))
 
         bookmarks = self.bookmarks.isChecked()  # lido aqui: widgets só na thread da interface
 
@@ -746,9 +409,11 @@ class MergeDialog(QDialog):
             return info
 
         def done(info):
-            SaveInfoDialog(self, info, "Arquivos unidos com sucesso").exec()
+            _status(self.parent(), f"✔ {len(files)} arquivo(s) unidos em {out}")
             if self.open_after.isChecked():
                 self.opened.emit(out)
+            elif not _status(self.parent(), None):
+                open_folder(out)
             self.accept()
 
         run_task(self, "Unindo arquivos...", work, on_done=done)
@@ -832,8 +497,8 @@ class SplitDialog(QDialog):
             return written
 
         def done(written):
-            QMessageBox.information(self, APP_NAME, f"{len(written)} arquivo(s) criado(s) em:\n{out_dir}")
-            open_folder(out_dir)
+            if not _status(self.parent(), f"✔ {len(written)} arquivo(s) criado(s) em {out_dir}"):
+                open_folder(written[0] if written else out_dir)  # aberto pelo Explorer: mostra a pasta
             self.accept()
 
         try:
@@ -935,14 +600,13 @@ class ConvertDialog(QDialog):
 
         def done(res):
             produced, errors = res
-            msg = f"{len(produced)} arquivo(s) gerado(s) em:\n{out_dir}"
-            if errors:
-                msg += "\n\nErros:\n" + "\n".join(errors)
-                QMessageBox.warning(self, APP_NAME, msg)
-            else:
-                QMessageBox.information(self, APP_NAME, msg)
-            if produced:
+            if errors:  # só avisa quando algo deu errado
+                QMessageBox.warning(self, APP_NAME, f"{len(produced)} arquivo(s) gerado(s) em:\n{out_dir}"
+                                    "\n\nErros:\n" + "\n".join(errors))
+            if produced and not _status(self.parent(), f"✔ {len(produced)} arquivo(s) gerado(s) em {out_dir}"):
                 open_folder(produced[-1])
+            if produced and not errors:
+                self.accept()
 
         run_task(self, "Convertendo...", work, on_done=done, with_progress=True)
 

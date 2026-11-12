@@ -151,3 +151,41 @@ def human_size(n: int) -> str:
 
 def now_str() -> str:
     return dt.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+
+def documents_dir() -> Path:
+    """Pasta Documentos do usuário (onde vão os PDFs novos que ainda não têm arquivo)."""
+    try:
+        from PySide6.QtCore import QStandardPaths
+        d = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+        if d:
+            return Path(d)
+    except Exception:
+        pass
+    return Path.home()
+
+
+def unique_path(path) -> str:
+    """Caminho livre: 'nome.pdf', 'nome (2).pdf', 'nome (3).pdf'... (nunca apaga um arquivo existente)."""
+    p = Path(path)
+    if not p.exists():
+        return str(p)
+    n = 2
+    while True:
+        cand = p.with_name(f"{p.stem} ({n}){p.suffix}")
+        if not cand.exists():
+            return str(cand)
+        n += 1
+
+
+def app_icon():
+    """Ícone da janela/barra de tarefas: o .ico e também PNGs em vários tamanhos (PNG não
+    depende do plug-in de imagens .ico do Qt, então o ícone aparece mesmo se ele faltar)."""
+    from PySide6.QtGui import QIcon
+    ic = QIcon(resource_path("icon.ico"))
+    for s in (16, 24, 32, 48, 64, 128):
+        p = resource_path(f"icon_{s}.png")
+        if os.path.exists(p):
+            ic.addFile(p)
+    ic.addFile(resource_path("icon.png"))
+    return ic

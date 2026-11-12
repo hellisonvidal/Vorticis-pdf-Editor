@@ -178,6 +178,7 @@ class TextResultDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(980, 640)
         self.base_name = base_name
+        self.folder = None  # pasta do documento (definida por quem abre a janela)
         lay = QVBoxLayout(self)
         split = QSplitter(Qt.Horizontal)
         self.src = QPlainTextEdit(text)
@@ -206,6 +207,10 @@ class TextResultDialog(QDialog):
         note = QLabel(f"<small style='color:{tc('muted')}'>A tradução usa um serviço on-line gratuito "
                       "(requer internet). O OCR funciona sem internet.</small>")
         lay.addWidget(note)
+        self.saved_lbl = QLabel()
+        self.saved_lbl.setWordWrap(True)
+        self.saved_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(self.saved_lbl)
         bb = QDialogButtonBox(QDialogButtonBox.Close)
         for label, fn in (("Copiar texto", lambda: self._copy(self.src)),
                           ("Copiar tradução", lambda: self._copy(self.dst)),
@@ -224,35 +229,31 @@ class TextResultDialog(QDialog):
         run_task(self, "Traduzindo...", tr.translate_text, self.src.toPlainText(), target,
                  on_done=self.dst.setPlainText, with_progress=True)
 
-    def _which(self):
-        if self.dst.toPlainText().strip():
-            r = QMessageBox.question(self, APP_NAME, "Salvar a tradução? (Não = salvar o texto original)",
-                                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-            if r == QMessageBox.Cancel:
-                return None
-            return self.dst.toPlainText() if r == QMessageBox.Yes else self.src.toPlainText()
-        return self.src.toPlainText()
+    def _target(self, ext):
+        """Salva direto ao lado do documento (sem janela): a tradução, se houver, senão o texto."""
+        from .config import documents_dir, unique_path
+        translated = bool(self.dst.toPlainText().strip())
+        text = self.dst.toPlainText() if translated else self.src.toPlainText()
+        folder = Path(self.folder) if self.folder else documents_dir()
+        name = f"{self.base_name}_{'traduzido' if translated else 'texto'}{ext}"
+        return text, unique_path(folder / name)
+
+    def _saved(self, path):
+        self.saved_lbl.setText(f"<span style='color:{tc('ok')}'>✔ Salvo em {path}</span>")
 
     def _save_txt(self):
-        text = self._which()
-        if text is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Salvar texto", self.base_name + ".txt", "Texto (*.txt)")
-        if path:
-            Path(path).write_text(text, "utf-8")
+        text, path = self._target(".txt")
+        Path(path).write_text(text, "utf-8")
+        self._saved(path)
 
     def _save_docx(self):
-        text = self._which()
-        if text is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Salvar como Word", self.base_name + ".docx",
-                                              "Word (*.docx)")
-        if path:
-            import docx
-            d = docx.Document()
-            for para in text.split("\n"):
-                d.add_paragraph(para)
-            d.save(path)
+        import docx
+        text, path = self._target(".docx")
+        d = docx.Document()
+        for para in text.split("\n"):
+            d.add_paragraph(para)
+        d.save(path)
+        self._saved(path)
 
 
 class TranslateDialog(QDialog):

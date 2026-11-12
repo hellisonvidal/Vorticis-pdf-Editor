@@ -7,7 +7,7 @@
 
 #define AppName "Vorticis PDF Editor"
 #ifndef AppVersion
-  #define AppVersion "1.4.0"
+  #define AppVersion "1.5.0"
 #endif
 #define AppExe "VorticisPDF.exe"
 
@@ -61,8 +61,9 @@ Source: "..\dist\VorticisPDF\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+; AppUserModelID igual ao do programa: a barra de tarefas agrupa a janela com o atalho e usa o ícone dele
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\{#AppExe}"; AppUserModelID: "Vorticis.PDFEditor"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\{#AppExe}"; AppUserModelID: "Vorticis.PDFEditor"; Tasks: desktopicon
 
 [Registry]
 Root: HKA; Subkey: "Software\Classes\.pdf"; ValueType: string; ValueName: ""; ValueData: "VorticisPDF.Document"; Flags: uninsdeletevalue; Tasks: defaultpdf

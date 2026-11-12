@@ -210,18 +210,17 @@ def main(argv=None):
             pass
 
     from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from . import APP_NAME
-    from .config import resource_path
     from .fonts import catalog
     from .single_instance import send_to_running
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Vorticis")
-    app.setWindowIcon(QIcon(resource_path("icon.ico")))
+    from .config import app_icon
+    app.setWindowIcon(app_icon())
     from . import i18n, theme
     i18n.install(app)
     theme.apply(app)

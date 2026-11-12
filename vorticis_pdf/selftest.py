@@ -191,6 +191,59 @@ def run() -> int:
         _paint(pr, multi.doc, [0])
         assert pymupdf.open(str(tmp / "impresso.pdf")).page_count == 1
         log("impressão em uma face OK")
+        # opções da janela de impressão: intervalo, ímpares, 4 por folha, tons de cinza, cópias
+        from .printing import PrintDialog, PrintOptions, parse_ranges
+        five = pymupdf.open()
+        for t in "ABCDE":
+            five.new_page().insert_text((72, 100), t, fontsize=40)
+        pdlg = PrintDialog(None, five, current=2)
+        pdlg.r_range.setChecked(True)
+        pdlg.range_edit.setText("1-5")
+        pdlg.subset.setCurrentIndex(pdlg.subset.findData("odd"))
+        pdlg.reverse.setChecked(True)
+        assert pdlg.chosen_pages() == [4, 2, 0], pdlg.chosen_pages()
+        assert parse_ranges("2-", 5) == [1, 2, 3, 4]
+        assert pdlg.orient.itemText(1).startswith("Retrato") and pdlg.orient.itemText(2).startswith("Paisagem")
+        pr2 = QPrinter(QPrinter.HighResolution)
+        pr2.setOutputFormat(QPrinter.PdfFormat)
+        pr2.setOutputFileName(str(tmp / "nup.pdf"))
+        _paint(pr2, five, [], PrintOptions(pages=[0, 1, 2, 3, 4], nup=4, gray=True, copies=2, dpi=100))
+        assert pymupdf.open(str(tmp / "nup.pdf")).page_count == 4
+        pdlg.deleteLater()
+        log("opções de impressão (intervalo, ímpares, ordem inversa, 4 por folha, cinza, cópias) OK")
+
+        # edição de texto direto na página (sem janela)
+        from .inline_edit import InlineSession
+        inl = PdfDocument(doc=pymupdf.open())
+        inl.doc.new_page().insert_text((72, 100), "Texto na página", fontsize=14)
+        iview = PdfView()
+        iview.resize(800, 900)
+        iview.set_document(inl.doc)
+        isp = iview.spans(0)[0]
+        got = {}
+        sess = InlineSession(iview, inl, [(0, isp)])
+        sess.finished.connect(lambda ch, ok: got.update(ch=ch))
+        sess.fields[0].setPlainText("Texto editado na página")
+        sess.commit()
+        ch = got["ch"][0]
+        inl.replace_text(ch["page"], ch["span"], ch["text"], ch["font"], ch["size"], ch["color"])
+        assert "Texto editado na página" in inl.doc[0].get_text(), inl.doc[0].get_text()
+        log(f"edição direto na página OK (fonte {ch['font'].label})")
+
+        # ícone da janela e da barra de tarefas
+        from PySide6.QtGui import QImageReader
+        from .config import app_icon
+        ic = app_icon()
+        sizes = [q.width() for q in ic.availableSizes()]
+        fmts = [bytes(f).decode() for f in QImageReader.supportedImageFormats()]
+        assert not ic.isNull() and 16 in sizes and 32 in sizes, sizes
+        msg = f"ícone OK (tamanhos {sorted(set(sizes))}; leitor .ico do Qt: {'sim' if 'ico' in fmts else 'não'})"
+        if sys.platform.startswith("win") and getattr(sys, "frozen", False):
+            import ctypes
+            n_icons = ctypes.windll.shell32.ExtractIconExW(sys.executable, -1, None, None, 0)
+            assert n_icons > 0, "o .exe não tem ícone embutido"
+            msg += f"; ícones no .exe: {n_icons}"
+        log(msg)
         log("RESULTADO: SUCESSO")
         return 0
     except Exception:
