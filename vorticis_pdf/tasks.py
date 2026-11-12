@@ -121,3 +121,24 @@ def wait_all(timeout_ms=30000):
     """Aguarda tarefas pendentes (usado ao sair do programa)."""
     for thread, _w, _r in list(_RUNNING):
         thread.wait(timeout_ms)
+
+
+class SilentRelay(QObject):
+    """Ações diretas do botão direito (sem janela): o fim da tarefa, feita numa thread comum,
+    volta para a thread da interface por sinal enfileirado."""
+    done = Signal(object)
+    failed = Signal(str, str)
+
+    def __init__(self, ctrl, label):
+        super().__init__()
+        self.ctrl, self.label = ctrl, label
+        self.done.connect(self._ok, Qt.QueuedConnection)
+        self.failed.connect(self._err, Qt.QueuedConnection)
+
+    @Slot(object)
+    def _ok(self, res):
+        self.ctrl.job_finished(self, res, None)
+
+    @Slot(str, str)
+    def _err(self, msg, tb):
+        self.ctrl.job_finished(self, None, (msg, tb))

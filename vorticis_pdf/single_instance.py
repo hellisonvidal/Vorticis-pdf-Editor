@@ -10,14 +10,42 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 SERVER_NAME = "VorticisPDFEditor-" + "".join(c for c in getpass.getuser() if c.isalnum())
-GATHER_MS = 700
+GATHER_MS = 1000
+
+
+_LOCK = None  # mantido enquanto este processo for a instância principal
+
+
+def _try_connect(timeout_ms=400):
+    sock = QLocalSocket()
+    sock.connectToServer(SERVER_NAME)
+    return sock if sock.waitForConnected(timeout_ms) else None
 
 
 def send_to_running(action: str, files: list[str]) -> bool:
-    sock = QLocalSocket()
-    sock.connectToServer(SERVER_NAME)
-    if not sock.waitForConnected(400):
-        return False
+    """True se os arquivos foram entregues a outra instância (este processo deve sair).
+    O Explorer inicia vários processos quase ao mesmo tempo (um por arquivo selecionado):
+    um arquivo de trava garante que só o primeiro vira a instância principal; os outros
+    esperam ela ficar pronta e entregam seus arquivos, em vez de agirem sozinhos."""
+    global _LOCK
+    import os
+    import tempfile
+    from PySide6.QtCore import QElapsedTimer, QLockFile, QThread
+    sock = _try_connect()
+    if sock is None:
+        lock = QLockFile(os.path.join(tempfile.gettempdir(), SERVER_NAME + ".lock"))
+        if lock.tryLock(0):
+            _LOCK = lock
+            return False  # somos a instância principal
+        timer = QElapsedTimer()
+        timer.start()
+        while sock is None and timer.elapsed() < 15000:  # a principal ainda está iniciando
+            QThread.msleep(150)
+            sock = _try_connect(300)
+        if sock is None:  # a principal não respondeu (fechou ou travou): segue sozinho
+            if lock.removeStaleLockFile() and lock.tryLock(0):
+                _LOCK = lock
+            return False
     sock.write(json.dumps({"action": action, "files": files}).encode("utf-8"))
     sock.flush()
     sock.waitForBytesWritten(1000)

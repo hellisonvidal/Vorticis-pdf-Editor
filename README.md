@@ -118,15 +118,29 @@ Todas as fontes instaladas entram na lista: `C:\Windows\Fonts`, as fontes do usu
 | Imagens (PNG, JPG, TIFF, BMP, GIF, WEBP), XPS, EPUB, CBZ, FB2, SVG, TXT → PDF | Nativo |
 | Word, Excel, PowerPoint, ODF, RTF, CSV, HTML → PDF | Pelo **LibreOffice** (gratuito) ou pelo **Microsoft Office**, se estiver instalado. Sem nenhum dos dois, faz uma conversão simplificada de DOCX, XLSX, CSV e HTML |
 | PDF → Word (.docx) | Mantém o layout (pdf2docx) |
-| PDF → Excel (.xlsx) | Uma planilha por página. Tabelas são detectadas, e as colunas são montadas a partir das linhas de texto |
+| PDF → Excel (.xlsx) | Uma planilha por página, sem perder nem misturar dados (veja abaixo) |
 | PDF → PowerPoint (.pptx) | Um slide por página, com o texto nas notas |
 | PDF → PNG / JPG / TIFF, TXT, HTML, Markdown, ODT, PDF otimizado | Nativo |
+
+**Conversão para Excel:**
+* **OCR completo automático** nas páginas que precisam: digitalizadas, cobertas por imagem, com tabela colada como imagem ou com texto ilegível (fontes sem mapa de caracteres). Antes do OCR, as linhas das tabelas são apagadas da imagem, porque o OCR costuma pular o texto dentro de grades.
+* **Tabelas com grade**, digitais ou digitalizadas, são remontadas célula por célula. Cada palavra vai para a célula em que está, então nada passa de uma célula para outra. O cabeçalho fica em negrito, com bordas.
+* **Texto em colunas sem grade**, como extratos e relatórios, é alinhado pela posição na página. Números alinhados à direita e células vazias, como Débito/Crédito, caem sempre na coluna certa.
+* **Números brasileiros viram números de verdade**: `1.234,56`, `R$ 1.234,56`, `-12,5%` e `(1.234,56)` (negativo). Datas `dd/mm/aaaa` viram datas. **Códigos com zero à esquerda** (CPF, CEP, matrícula, `00123`) e números longos continuam como texto, sem perder dígitos.
 
 ### Menu do botão direito no Windows Explorer
 Ative pelo instalador ou em **Ferramentas › Adicionar ao menu do botão direito**. Não exige administrador. Depois disso, selecione os arquivos numa pasta, clique com o botão direito e escolha **Vorticis PDF**:
 
-* **PDF**: Abrir · **Unir PDFs selecionados** · **Separar PDF** · **Organizar páginas** · Imprimir · Converter PDF para…
-* **Office e imagens**: Converter para PDF · Unir como um único PDF · Abrir
+* **PDF**: Abrir · **Unir PDFs selecionados** · **Separar PDF ▸** (uma página por arquivo, ao meio, a cada 2, 5 ou 10 páginas, ímpares e pares) · **Organizar páginas** · Imprimir · **Converter para ▸** (Word, Excel, PowerPoint, PNG, JPG, TIFF, texto, HTML, Markdown, ODT, PDF otimizado ou *Mais opções...*)
+* **Office e imagens**: Converter para PDF · **Converter para ▸** (PDF, Word, Excel...) · Unir como um único PDF · Abrir
+
+**As ações executam direto, sem abrir nenhuma janela**: o resultado é gravado na mesma pasta e nada aparece na tela. Só há mensagem se algo der errado.
+* **Unir** → `primeiro_unido.pdf`;
+* **Separar** → pasta `nome - separado`;
+* **Converter** → arquivo com o mesmo nome e a nova extensão;
+* **Imprimir** → vai para a impressora padrão (ou a última usada), com as opções da última impressão, sempre em uma face.
+
+Nenhum arquivo existente é sobrescrito: se o nome já existir, é usado `nome (2)`. Só **Abrir** e **Organizar páginas** abrem o editor, e *Mais opções...* abre a janela de conversão.
 
 Se vários arquivos estiverem selecionados, o Vorticis junta todos numa única operação. Também são criados atalhos em **Enviar para** (*Vorticis - Unir em PDF* e *Vorticis - Organizar páginas*).
 > **Windows 11:** por padrão, o Windows esconde as opções de programas em "Mostrar mais opções". O instalador já oferece, marcada, a opção **"Windows 11: mostrar as opções direto no botão direito"**. Ela também pode ser ligada ou desligada em **Ferramentas › Windows 11: mostrar as opções direto no botão direito**.
@@ -145,12 +159,13 @@ Se vários arquivos estiverem selecionados, o Vorticis junta todos numa única o
 ### Linha de comando
 ```
 VorticisPDF.exe arquivo.pdf
-VorticisPDF.exe --merge a.pdf b.pdf planilha.xlsx
-VorticisPDF.exe --split a.pdf
+VorticisPDF.exe --merge a.pdf b.pdf planilha.xlsx   (sem janela → a_unido.pdf)
+VorticisPDF.exe --split=each a.pdf                  (each, half, every2, every5, every10, oddeven)
 VorticisPDF.exe --organize a.pdf b.pdf
-VorticisPDF.exe --print a.pdf
-VorticisPDF.exe --convert a.pdf          (PDF → Word/Excel/...)
-VorticisPDF.exe --to-pdf documento.docx  (Office/imagens → PDF)
+VorticisPDF.exe --print a.pdf                       (impressora padrão, sem janela)
+VorticisPDF.exe --convert=xlsx a.pdf                (docx, xlsx, pptx, png, jpg, tiff, txt, html, md, odt, pdfa, pdf)
+VorticisPDF.exe --to-pdf documento.docx
+VorticisPDF.exe --convert a.pdf                     (abre a janela de conversão)
 VorticisPDF.exe --register-shell | --unregister-shell
 ```
 
@@ -216,6 +231,8 @@ vorticis_pdf/
   converters.py        conversões entre formatos
   dialogs.py           diálogos (unir, separar, converter, histórico, propriedades)
   inline_edit.py       edição de texto direto na página e barra de edição
+  excel_export.py      PDF → Excel (OCR completo, tabelas, colunas e números)
+  quick_actions.py     ações diretas do botão direito (unir, separar, converter, imprimir)
   printing.py          janela de impressão em português e impressão
   ocr.py               OCR (Tesseract embutido no PyMuPDF)
   translate.py         tradução de textos e de PDFs mantendo o layout

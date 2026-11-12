@@ -1,13 +1,15 @@
 """Ponto de entrada: argumentos de linha de comando, instância única e janelas.
 
-Exemplos (os mesmos usados pelo menu do botão direito do Explorer):
+Exemplos (os mesmos usados pelo menu do botão direito do Explorer). As ações do menu
+executam direto, sem abrir janela; só "Abrir" e "Organizar páginas" abrem o editor:
     VorticisPDF.exe arquivo.pdf
-    VorticisPDF.exe --merge a.pdf b.pdf c.docx
-    VorticisPDF.exe --split a.pdf
+    VorticisPDF.exe --merge a.pdf b.pdf c.docx      -> a_unido.pdf
+    VorticisPDF.exe --split=each a.pdf              (each|half|every2|every5|every10|oddeven)
     VorticisPDF.exe --organize a.pdf b.pdf
-    VorticisPDF.exe --print a.pdf
-    VorticisPDF.exe --convert a.pdf        (PDF -> Word/Excel/...)
-    VorticisPDF.exe --to-pdf planilha.xlsx (Office/imagens -> PDF)
+    VorticisPDF.exe --print a.pdf                   (impressora padrão, sem janela)
+    VorticisPDF.exe --convert=xlsx a.pdf            (docx|xlsx|pptx|png|jpg|tiff|txt|html|md|odt|pdfa|pdf)
+    VorticisPDF.exe --to-pdf planilha.xlsx
+    VorticisPDF.exe --convert a.pdf                 (abre a janela de conversão)
     VorticisPDF.exe --register-shell | --unregister-shell
 """
 from __future__ import annotations
@@ -25,6 +27,9 @@ def parse_args(argv):
     for a in argv:
         if a in ACTIONS:
             action = ACTIONS[a]
+        elif a.startswith(("--convert=", "--split=")):  # submenus: --convert=xlsx, --split=half
+            name, _, value = a[2:].partition("=")
+            action = f"{name}:{value}"
         elif a in ("--register-shell", "--unregister-shell", "--selftest", "--full-menu-on",
                    "--full-menu-off"):
             special = a
@@ -39,6 +44,7 @@ class Controller:
         self.app = app
         self.windows = []
         self.dialogs = []
+        self.jobs = set()
         self.server = InstanceServer()
         self.server.request.connect(self.handle)
 
@@ -96,8 +102,48 @@ class Controller:
     def _dialog_done(self, dlg):
         if dlg in self.dialogs:
             self.dialogs.remove(dlg)
-        if not self.dialogs and not self.windows:
+        self._maybe_quit()
+
+    def _maybe_quit(self):
+        if not self.dialogs and not self.windows and not self.jobs:
             self.app.quit()
+
+    # ---------------- ações diretas (sem janela) ----------------
+    def run_silent(self, label, fn, *args):
+        """Executa em segundo plano, sem janela. Sucesso: nada aparece (só na barra de status,
+        se o editor estiver aberto). Erro: mensagem e registro de erros."""
+        import threading
+        import traceback
+        from .tasks import PDF_LOCK
+        from .tasks import SilentRelay
+        relay = SilentRelay(self, label)
+        self.jobs.add(relay)
+
+        def target():
+            try:
+                with PDF_LOCK:
+                    res = fn(*args)
+                relay.done.emit(res)
+            except Exception as e:
+                relay.failed.emit(str(e), traceback.format_exc())
+
+        threading.Thread(target=target, name=f"vorticis-{label}", daemon=False).start()
+
+    def job_finished(self, relay, result, error):
+        self.jobs.discard(relay)
+        if error:
+            from PySide6.QtWidgets import QMessageBox
+            from . import APP_NAME
+            from .config import log_error
+            from .i18n import friendly
+            log_error(relay.label, error[1])
+            QMessageBox.critical(None, APP_NAME, f"Não foi possível {relay.label}:\n{friendly(error[0])}")
+        elif self.windows:
+            n = len(result) if isinstance(result, list) else 1
+            where = result if isinstance(result, str) else (Path(result[0]).parent if result else "")
+            self.windows[-1].statusBar().showMessage(f"✔ {relay.label.capitalize()}: {n} arquivo(s) em {where}",
+                                                     10000)
+        self._maybe_quit()
 
     # ---------------- ações ----------------
     def merge(self, files):
@@ -142,27 +188,27 @@ class Controller:
         w.a_organize.setChecked(True)
         w.toggle_organize()
 
-    def print_files(self, files):
-        from .printing import print_document
-        from .document import open_any
-        for f in files:
-            doc = open_any(f)
-            print_document(None, doc)
-        if not self.windows:
-            self.app.quit()
-
     def handle(self, action, files):
-        if action == "merge":
+        from . import quick_actions as qa
+        files = [f for f in files if f]
+        name, _, value = action.partition(":")
+        if name == "merge" and files:
+            self.run_silent("unir os arquivos", qa.merge, files)
+        elif name == "merge":
             self.merge(files)
-        elif action == "split":
-            self.split(files)
-        elif action == "organize":
+        elif name == "split" and files:
+            self.run_silent("separar", qa.split, files, value or "each")
+        elif name == "organize":
             self.organize(files)
-        elif action == "print":
-            self.print_files(files)
-        elif action == "convert":
+        elif name == "print" and files:
+            self.run_silent("imprimir", qa.print_files, files)
+        elif name == "convert" and value and files:
+            self.run_silent("converter", qa.convert, files, value)
+        elif name == "to_pdf" and files:
+            self.run_silent("converter para PDF", qa.convert, files, "pdf")
+        elif name == "convert":
             self.convert(files, to_pdf=False)
-        elif action == "to_pdf":
+        elif name == "to_pdf":
             self.convert(files, to_pdf=True)
         else:
             if files:

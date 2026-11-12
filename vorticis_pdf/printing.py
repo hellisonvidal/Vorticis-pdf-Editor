@@ -467,22 +467,7 @@ class PrintDialog(QDialog):
                             center=self.center.isChecked())
 
     def configure(self, printer: QPrinter, opts: PrintOptions):
-        printer.setPrinterName(self.printer_combo.currentData())
-        if self.paper.currentData() is not None:
-            printer.setPageSize(QPageSize(QPageSize.PageSizeId(self.paper.currentData())))
-        orient = opts.orientation
-        if orient == "auto":
-            first = self.doc[opts.pages[0]].rect if opts.pages else pymupdf.Rect(0, 0, 1, 2)
-            landscape = first.width > first.height
-            if opts.nup == 2:  # duas por folha ficam lado a lado em paisagem
-                landscape = not landscape
-        else:
-            landscape = orient == "landscape"
-        printer.setPageOrientation(QPageLayout.Landscape if landscape else QPageLayout.Portrait)
-        printer.setColorMode(QPrinter.GrayScale if opts.gray else QPrinter.Color)
-        printer.setCopyCount(1)  # as cópias são feitas aqui (agrupadas ou não)
-        printer.setFullPage(False)
-        _force_single_sided(printer)
+        configure_printer(printer, self.doc, self.printer_combo.currentData(), self.paper.currentData(), opts)
 
     def _accept(self):
         try:
@@ -491,6 +476,58 @@ class PrintDialog(QDialog):
             return
         self._save()
         self.accept()
+
+
+def configure_printer(printer: QPrinter, doc, name: str, paper_id, opts: PrintOptions):
+    printer.setPrinterName(name)
+    if paper_id is not None:
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId(int(paper_id))))
+    if opts.orientation == "auto":
+        first = doc[opts.pages[0]].rect if opts.pages else pymupdf.Rect(0, 0, 1, 2)
+        landscape = first.width > first.height
+        if opts.nup == 2:  # duas por folha ficam lado a lado em paisagem
+            landscape = not landscape
+    else:
+        landscape = opts.orientation == "landscape"
+    printer.setPageOrientation(QPageLayout.Landscape if landscape else QPageLayout.Portrait)
+    printer.setColorMode(QPrinter.GrayScale if opts.gray else QPrinter.Color)
+    printer.setCopyCount(1)  # as cópias são feitas aqui (agrupadas ou não)
+    printer.setFullPage(False)
+    _force_single_sided(printer)
+
+
+def saved_setup(doc):
+    """Impressora e opções da última impressão (ou a impressora padrão do Windows)."""
+    st = QSettings()
+    names = QPrinterInfo.availablePrinterNames()
+    name = st.value("print/printer", "")
+    if name not in names:
+        name = QPrinterInfo.defaultPrinterName() or (names[0] if names else "")
+    paper = st.value("print/paper", None)
+    if paper is None and name:
+        info = QPrinterInfo.printerInfo(name)
+        paper = int(info.defaultPageSize().id().value) if not info.isNull() else None
+    opts = PrintOptions(pages=list(range(doc.page_count)),
+                        collate=st.value("print/collate", True, type=bool),
+                        orientation=st.value("print/orientation", "auto"),
+                        scale=st.value("print/scale", "fit"), custom=int(st.value("print/custom", 100)),
+                        nup=int(st.value("print/nup", 1)), gray=st.value("print/gray", False, type=bool),
+                        dpi=int(st.value("print/dpi", 300)), annots=st.value("print/annots", True, type=bool),
+                        center=st.value("print/center", True, type=bool))
+    return name, paper, opts
+
+
+def print_silent(doc: pymupdf.Document, printer_name: str | None = None) -> str:
+    """Imprime o documento inteiro sem abrir janela (botão direito › Imprimir)."""
+    name, paper, opts = saved_setup(doc)
+    name = printer_name or name
+    if not name:
+        raise RuntimeError("Nenhuma impressora instalada no Windows.")
+    printer = QPrinter(QPrinter.HighResolution)
+    printer.setDocName("Vorticis PDF")
+    configure_printer(printer, doc, name, paper, opts)
+    _paint(printer, doc, opts.pages, opts)
+    return name
 
 
 def print_document(parent, doc: pymupdf.Document, subset: list[int] | None = None,

@@ -76,6 +76,38 @@ jobs:
           Start-Process -FilePath $exe -ArgumentList "--full-menu-off","--no-restart" -Wait
           if (Test-Path $k) { throw "Menu completo do Windows 11 não foi desativado" }
           Write-Host "Menu completo do Windows 11: ativar/desativar OK"
+          # botão direito: submenus e ações diretas, sem janela (o processo precisa terminar sozinho)
+          $menu = "HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\VorticisPDF\shell"
+          if (-not (Test-Path "$menu\6convert\shell\02xlsx\command")) { throw "Submenu Converter para não registrado" }
+          if (-not (Test-Path "$menu\3split\shell\2half\command")) { throw "Submenu Separar não registrado" }
+          $d = Join-Path $env:RUNNER_TEMP "menu"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          @"
+          import pymupdf, sys
+          for n in "ab":
+              d = pymupdf.open()
+              for k in range(2):
+                  d.new_page().insert_text((72, 100), f"{n} {k} Total 1.234,56", fontsize=12)
+              d.save(sys.argv[1] + f"/{n}.pdf")
+          "@ | Set-Content "$d\mk.py"
+          python "$d\mk.py" $d
+          function Run-Menu($argsList) {
+            $p = Start-Process -FilePath $exe -ArgumentList $argsList -PassThru
+            if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "A ação '$argsList' abriu uma janela ou travou" }
+          }
+          # o Explorer abre um processo por arquivo: o segundo repassa ao primeiro
+          $p1 = Start-Process -FilePath $exe -ArgumentList "--merge","`"$d\a.pdf`"" -PassThru
+          Start-Sleep -Milliseconds 300
+          Start-Process -FilePath $exe -ArgumentList "--merge","`"$d\b.pdf`"" -Wait
+          if (-not $p1.WaitForExit(180000)) { $p1.Kill(); throw "Unir abriu uma janela ou travou" }
+          python -c "import pymupdf,sys; n=pymupdf.open(sys.argv[1]).page_count; assert n==4, n" "$d\a_unido.pdf"
+          if ($LASTEXITCODE -ne 0) { throw "Unir pelo botão direito não gerou o PDF com 4 páginas" }
+          Run-Menu @("--convert=xlsx", "`"$d\a.pdf`"")
+          if (-not (Test-Path "$d\a.xlsx")) { throw "Converter para Excel pelo botão direito falhou" }
+          Run-Menu @("--split=half", "`"$d\b.pdf`"")
+          if ((Get-ChildItem "$d\b - separado\*.pdf").Count -ne 2) { throw "Separar ao meio pelo botão direito falhou" }
+          Get-ChildItem -Recurse $d | ForEach-Object { Write-Host "  $($_.FullName)" }
+          Write-Host "Botão direito (unir, converter para Excel, separar) sem janelas: OK"
           $un = "$env:LOCALAPPDATA\Programs\Vorticis PDF Editor\unins000.exe"
           Start-Process -FilePath $un -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
 

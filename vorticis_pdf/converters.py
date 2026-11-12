@@ -342,68 +342,9 @@ def from_pdf(src_pdf: str, fmt: str, out_path: str, dpi: int = 150, progress=Non
 
 
 def _pdf_to_xlsx(doc, out, tick):
-    """Cada página vira uma planilha; tabelas detectadas viram células, o resto vira linhas."""
-    import openpyxl
-    from openpyxl.styles import Font
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)
-    for i, page in enumerate(doc):
-        ws = wb.create_sheet(f"Página {i + 1}")
-        row = 1
-        tables = []
-        try:
-            tables = page.find_tables().tables
-        except Exception:
-            pass
-        table_rects = [pymupdf.Rect(t.bbox) for t in tables]
-        # texto fora das tabelas: trechos agrupados por linha (mesma altura) e
-        # distribuídos em colunas conforme a posição horizontal
-        spans = []
-        for b in page.get_text("dict")["blocks"]:
-            for l in b.get("lines", []):
-                for s in l["spans"]:
-                    r = pymupdf.Rect(s["bbox"])
-                    if s["text"].strip() and not any(r.intersects(tr) for tr in table_rects):
-                        spans.append((r, s["text"].strip()))
-        spans.sort(key=lambda it: (it[0].y1, it[0].x0))
-        lines = []
-        for r, txt in spans:
-            if lines and abs(lines[-1][0] - r.y1) <= max(2.0, r.height * 0.35):
-                lines[-1][1].append((r.x0, txt))
-            else:
-                lines.append([r.y1, [(r.x0, txt)]])
-        items = [(y, "line", sorted(cells)) for y, cells in lines] + \
-                [(t.bbox[1], "table", t) for t in tables]
-        for _y, kind, obj in sorted(items, key=lambda it: it[0]):
-            if kind == "line":
-                for col, (_x, txt) in enumerate(obj, 1):
-                    ws.cell(row, col, _number(txt))
-                row += 1
-            else:
-                data = obj.extract()
-                for r_i, r in enumerate(data):
-                    for c_i, v in enumerate(r):
-                        cell = ws.cell(row, c_i + 1, _number(v))
-                        if r_i == 0:
-                            cell.font = Font(bold=True)
-                    row += 1
-                row += 1
-        for col in ws.columns:
-            width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
-            ws.column_dimensions[col[0].column_letter].width = min(60, max(8, width + 2))
-        tick(i + 1)
-    wb.save(out)
-
-
-def _number(v):
-    if v is None:
-        return None
-    s = str(v).strip()
-    t = s.replace(".", "").replace(",", ".") if "," in s else s
-    try:
-        return int(t) if t.isdigit() else float(t)
-    except ValueError:
-        return s
+    """Tabelas e colunas reconstruídas; OCR completo nas páginas digitalizadas (excel_export)."""
+    from .excel_export import pdf_to_xlsx
+    return pdf_to_xlsx(doc, out, tick)
 
 
 def _pdf_to_pptx(doc, out, dpi, tick):

@@ -230,6 +230,33 @@ def run() -> int:
         assert "Texto editado na página" in inl.doc[0].get_text(), inl.doc[0].get_text()
         log(f"edição direto na página OK (fonte {ch['font'].label})")
 
+        # Excel: tabela digitalizada (OCR completo com as linhas da grade apagadas) e colunas
+        from .excel_export import pdf_to_xlsx
+        import openpyxl
+        vec = pymupdf.open()
+        vp = vec.new_page()
+        cols, rows_y = [50, 130, 330, 430], [90 + i * 22 for i in range(4)]
+        cells = [["Código", "Produto", "Valor"], ["00123", "Caneta azul", "R$ 25,50"],
+                 ["00456", "Caderno grande", "R$ 1.234,00"]]
+        for y in rows_y:
+            vp.draw_line((cols[0], y), (cols[-1], y))
+        for x in cols:
+            vp.draw_line((x, rows_y[0]), (x, rows_y[-1]))
+        for r_i, r in enumerate(cells):
+            for c_i, v in enumerate(r):
+                vp.insert_text((cols[c_i] + 4, rows_y[r_i] + 15), v, fontsize=11)
+        scan = pymupdf.open()
+        sp_ = scan.new_page(width=vp.rect.width, height=vp.rect.height)
+        sp_.insert_image(sp_.rect, pixmap=vp.get_pixmap(dpi=200))
+        xl_out = str(tmp / "tabela.xlsx")
+        res = pdf_to_xlsx(scan, xl_out)
+        got = [list(r) for r in openpyxl.load_workbook(xl_out).active.iter_rows(values_only=True)]
+        flat = [v for r in got for v in r if v is not None]
+        assert res["paginas_ocr"] == [1] and res["tabelas"] == 1, (res, got)
+        assert ["00123", "Caneta azul", 25.5] in [r[:3] for r in got], got
+        assert 1234 in flat and "Código" in flat, got
+        log("Excel com OCR completo e tabela digitalizada OK")
+
         # ícone da janela e da barra de tarefas
         from PySide6.QtGui import QImageReader
         from .config import app_icon

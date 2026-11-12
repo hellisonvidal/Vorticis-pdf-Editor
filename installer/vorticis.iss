@@ -7,7 +7,7 @@
 
 #define AppName "Vorticis PDF Editor"
 #ifndef AppVersion
-  #define AppVersion "1.5.1"
+  #define AppVersion "1.6.0"
 #endif
 #define AppExe "VorticisPDF.exe"
 

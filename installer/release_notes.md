@@ -11,6 +11,16 @@ Requisitos: Windows 10 ou 11 (64 bits).
 > que ainda não tem assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
 > O código é aberto e os arquivos podem ser conferidos pelo `SHA256SUMS.txt`.
 
+## Novidades da 1.6.0
+- **Botão direito executa direto, sem abrir janelas.** Unir, separar, converter e imprimir gravam o resultado na mesma pasta, sem nada aparecer na tela: `_unido.pdf`, pasta `- separado` e o mesmo nome com a nova extensão. A impressão vai para a impressora padrão. Só aparece mensagem se der erro, e nenhum arquivo existente é sobrescrito.
+- **Submenu "Converter para ▸"** com todos os formatos: Word, Excel, PowerPoint, PNG, JPG, TIFF, texto, HTML, Markdown, ODT e PDF otimizado. Arquivos do Office e imagens também têm o submenu, com PDF, Word, Excel etc. Há também o submenu **"Separar PDF ▸"**: uma página por arquivo, ao meio, a cada 2, 5 ou 10 páginas, ímpares e pares.
+- **Conversão para Excel refeita:**
+  - OCR completo automático onde precisa: páginas digitalizadas, tabelas coladas como imagem e texto ilegível;
+  - tabelas remontadas célula por célula, também nas digitalizadas;
+  - colunas alinhadas em extratos e relatórios;
+  - números brasileiros (R$, %, milhar) viram números, datas viram datas, e CPF, CEP e códigos com zero à esquerda são mantidos.
+- Corrigido: ao selecionar vários arquivos no Explorer, os processos que iniciavam ao mesmo tempo podiam agir separadamente (por exemplo, gerar dois arquivos unidos em vez de um).
+
 ## Novidades da 1.5.1
 - Instalador e versão portátil cerca de 100 MB menores: ficaram de fora arquivos que o programa não usa (modelos de IA de layout do PyMuPDF, vídeo do OpenCV e o OpenGL por software do Qt).
 

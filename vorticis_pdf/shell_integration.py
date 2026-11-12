@@ -1,11 +1,11 @@
 """Integração com o Windows Explorer (menu do botão direito e 'Enviar para').
 
 Tudo é gravado em HKEY_CURRENT_USER — não precisa de administrador.
-Menu criado para arquivos .pdf:
-    Vorticis PDF  ▸  Abrir no Vorticis | Unir PDFs selecionados | Separar PDF |
-                     Organizar páginas | Imprimir | Converter para...
+Menu criado para arquivos .pdf (as ações executam direto, sem abrir janela):
+    Vorticis PDF  ▸  Abrir no Vorticis | Unir PDFs selecionados | Separar PDF ▸ (modos) |
+                     Organizar páginas | Imprimir | Converter para ▸ (Word, Excel, ...)
 Para documentos do Office/imagens:
-    Vorticis PDF  ▸  Converter para PDF | Unir como PDF
+    Vorticis PDF  ▸  Converter para PDF | Converter para ▸ (...) | Unir como um único PDF
 
 Windows 11: o menu compacto esconde opções de programas em "Mostrar mais opções".
 enable_full_menu() ativa (só para o usuário atual, sem administrador e de forma reversível)
@@ -18,7 +18,8 @@ import sys
 from pathlib import Path
 
 
-from .converters import OFFICE_TO_PDF, NATIVE_TO_PDF
+from .converters import FROM_PDF, OFFICE_TO_PDF, NATIVE_TO_PDF
+from .quick_actions import SPLIT_MODES
 
 # CLSID do menu compacto do Windows 11; um InprocServer32 vazio em HKCU faz o Explorer
 # usar o menu completo (o mesmo de "Mostrar mais opções") diretamente.
@@ -28,18 +29,25 @@ OWN_KEY = r"Software\Vorticis\PDFEditor"
 PROGID = "VorticisPDF.Document"
 MENU_KEY = "VorticisPDF"
 
+# submenus: cada formato executa a conversão direto, ao lado do arquivo original
+CONVERT_SUB = [(f"{i + 1:02d}{key}", desc, f"--convert={key}") for i, (key, (desc, _e)) in enumerate(FROM_PDF.items())]
+SPLIT_SUB = [(f"{i + 1}{key}", label, f"--split={key}") for i, (key, (label, _m, _v)) in enumerate(SPLIT_MODES.items())]
+OTHER_CONVERT_SUB = [("00pdf", "PDF (.pdf)", "--convert=pdf")] + \
+    [c for c in CONVERT_SUB if not c[2].endswith(("=pdfa", "=odt"))]
+
 PDF_VERBS = [
     ("1open", "Abrir no Vorticis", "--open"),
     ("2merge", "Unir PDFs selecionados", "--merge"),
-    ("3split", "Separar PDF", "--split"),
+    ("3split", "Separar PDF", SPLIT_SUB),
     ("4organize", "Organizar páginas", "--organize"),
-    ("5print", "Imprimir", "--print"),
-    ("6convert", "Converter PDF para...", "--convert"),
+    ("5print", "Imprimir (impressora padrão)", "--print"),
+    ("6convert", "Converter para", CONVERT_SUB + [("99more", "Mais opções...", "--convert")]),
 ]
 OTHER_VERBS = [
     ("1topdf", "Converter para PDF", "--to-pdf"),
-    ("2merge", "Unir como um único PDF", "--merge"),
-    ("3open", "Abrir no Vorticis", "--open"),
+    ("2convert", "Converter para", OTHER_CONVERT_SUB),
+    ("3merge", "Unir como um único PDF", "--merge"),
+    ("4open", "Abrir no Vorticis", "--open"),
 ]
 
 
@@ -86,12 +94,21 @@ def _delete_tree(winreg, path):
 
 def _menu(winreg, ext, verbs):
     base = rf"Software\Classes\SystemFileAssociations\{ext}\shell\{MENU_KEY}"
+    _delete_tree(winreg, base)  # remove itens de versões anteriores
     _set(winreg, base, {"MUIVerb": "Vorticis PDF", "Icon": icon_path(), "SubCommands": "",
                         "MultiSelectModel": "Player"})
-    cmd = exe_command()
+    _verbs(winreg, base, verbs, exe_command())
+
+
+def _verbs(winreg, base, verbs, cmd):
     for key, label, flag in verbs:
-        _set(winreg, rf"{base}\shell\{key}", {"MUIVerb": label, "MultiSelectModel": "Player"})
-        _set(winreg, rf"{base}\shell\{key}\command", {"": f'{cmd} {flag} "%1"'})
+        path = rf"{base}\shell\{key}"
+        if isinstance(flag, list):  # submenu
+            _set(winreg, path, {"MUIVerb": label, "SubCommands": "", "MultiSelectModel": "Player"})
+            _verbs(winreg, path, flag, cmd)
+        else:
+            _set(winreg, path, {"MUIVerb": label, "MultiSelectModel": "Player"})
+            _set(winreg, rf"{path}\command", {"": f'{cmd} {flag} "%1"'})
 
 
 def _sendto_dir() -> Path:
