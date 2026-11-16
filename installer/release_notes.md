@@ -11,6 +11,12 @@ Requisitos: Windows 10 ou 11 (64 bits).
 > que ainda não tem assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
 > O código é aberto e os arquivos podem ser conferidos pelo `SHA256SUMS.txt`.
 
+## Novidades da 1.7.0
+- **Atualizações pelo próprio programa:** *Ajuda › Verificar atualizações...* mostra as novidades e instala a versão nova sem abrir o navegador. O download é conferido pela soma SHA-256. Na versão instalada, o instalador roda sozinho e o programa reabre. Na portátil, os arquivos são trocados e a pasta `dados` é mantida. Uma vez por dia o programa verifica sozinho e mostra o botão **Atualizar** na barra de status (dá para desligar no menu Ajuda).
+- **Abas:** cada arquivo aberto vira uma aba na mesma janela, com o próprio zoom, posição e desfazer. `Ctrl+Tab` troca de aba e `Ctrl+W` fecha. O botão direito na aba move o documento para uma nova janela. Para voltar a abrir cada arquivo numa janela, desmarque *Exibir › Abrir arquivos em abas*.
+- **Mover textos arrastando:** com a ferramenta Seleção, arraste um texto selecionado para mover todos os selecionados, com prévia no novo lugar. `Shift` trava na horizontal ou na vertical, e as setas movem 1 pt (`Shift` + seta: 10 pt). Fonte, tamanho e cor são mantidos.
+- **A tela não pula mais:** escolher uma ferramenta, mostrar ou esconder barras, mudar o ajuste do zoom, girar, excluir páginas, desfazer e refazer mantêm o mesmo trecho do documento na tela. Antes, a página voltava para o início.
+
 ## Novidades da 1.6.0
 - **Botão direito executa direto, sem abrir janelas.** Unir, separar, converter e imprimir gravam o resultado na mesma pasta, sem nada aparecer na tela: `_unido.pdf`, pasta `- separado` e o mesmo nome com a nova extensão. A impressão vai para a impressora padrão. Só aparece mensagem se der erro, e nenhum arquivo existente é sobrescrito.
 - **Submenu "Converter para ▸"** com todos os formatos: Word, Excel, PowerPoint, PNG, JPG, TIFF, texto, HTML, Markdown, ODT e PDF otimizado. Arquivos do Office e imagens também têm o submenu, com PDF, Word, Excel etc. Há também o submenu **"Separar PDF ▸"**: uma página por arquivo, ao meio, a cada 2, 5 ou 10 páginas, ímpares e pares.

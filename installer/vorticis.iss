@@ -7,7 +7,7 @@
 
 #define AppName "Vorticis PDF Editor"
 #ifndef AppVersion
-  #define AppVersion "1.6.0"
+  #define AppVersion "1.7.0"
 #endif
 #define AppExe "VorticisPDF.exe"
 
@@ -72,6 +72,8 @@ Root: HKA; Subkey: "Software\Classes\.pdf"; ValueType: string; ValueName: ""; Va
 Filename: "{app}\{#AppExe}"; Parameters: "--register-shell"; Flags: runhidden waituntilterminated; Tasks: contextmenu
 Filename: "{app}\{#AppExe}"; Parameters: "--full-menu-on"; Flags: runhidden waituntilterminated; Tasks: win11menu
 Filename: "{app}\{#AppExe}"; Description: "Abrir o {#AppName}"; Flags: nowait postinstall skipifsilent
+; atualização feita pelo próprio programa (instalador silencioso com /RELAUNCH=1): abre o programa de novo
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 
 [UninstallRun]
 Filename: "{app}\{#AppExe}"; Parameters: "--unregister-shell"; Flags: runhidden; RunOnceId: "UnregShell"
@@ -83,4 +85,9 @@ var
 begin
   GetWindowsVersionEx(V);
   Result := (V.Major = 10) and (V.Build >= 22000);
+end;
+
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
 end;

@@ -64,6 +64,21 @@ def run() -> int:
         assert len(pd.doc[0].get_drawings()) == 1, "linha removida"
         log(f"edição de texto OK (fonte: {font.label} / {font.source})")
 
+        # mover texto arrastando (ferramenta Seleção): o vizinho e a linha ficam no lugar
+        span = next(s | {"dir": l["dir"]} for b in pd.doc[0].get_text("dict")["blocks"]
+                    for l in b.get("lines", []) for s in l["spans"] if "Editado" in s["text"])
+        moved = pd.move_texts([(0, span)], 40, 200)
+        new = [s for b in pd.doc[0].get_text("dict")["blocks"] for l in b.get("lines", [])
+               for s in l["spans"] if "Editado" in s["text"]]
+        assert moved and new and abs(new[0]["bbox"][1] - span["bbox"][1] - 200) < 2, new
+        assert "linha vizinha" in pd.doc[0].get_text() and len(pd.doc[0].get_drawings()) == 1
+        pd.undo()
+        log("mover texto OK")
+
+        from .updater import is_newer, parse_version
+        assert is_newer("1.10.0", "1.9.9") and not is_newer("1.7.0", "1.7") and parse_version("v2.0.1") == (2, 0, 1)
+        log("comparação de versões (atualizações) OK")
+
         # união pela tarefa em segundo plano (resultado volta na thread da interface)
         from .document import merge_files
         out = str(tmp / "unido.pdf")

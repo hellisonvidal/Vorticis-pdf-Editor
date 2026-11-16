@@ -11,6 +11,7 @@ executam direto, sem abrir janela; só "Abrir" e "Organizar páginas" abrem o ed
     VorticisPDF.exe --to-pdf planilha.xlsx
     VorticisPDF.exe --convert a.pdf                 (abre a janela de conversão)
     VorticisPDF.exe --register-shell | --unregister-shell
+    VorticisPDF.exe --apply-update=<pasta> --wait-pid=<pid>   (uso interno: atualiza a versão portátil)
 """
 from __future__ import annotations
 
@@ -25,7 +26,9 @@ ACTIONS = {"--open": "open", "--merge": "merge", "--split": "split", "--organize
 def parse_args(argv):
     action, files, special = "open", [], None
     for a in argv:
-        if a in ACTIONS:
+        if a.startswith(("--apply-update=", "--wait-pid=")):
+            special = special if a.startswith("--wait-pid=") else "--apply-update"
+        elif a in ACTIONS:
             action = ACTIONS[a]
         elif a.startswith(("--convert=", "--split=")):  # submenus: --convert=xlsx, --split=half
             name, _, value = a[2:].partition("=")
@@ -47,6 +50,35 @@ class Controller:
         self.jobs = set()
         self.server = InstanceServer()
         self.server.request.connect(self.handle)
+        self.update_info = None  # última versão encontrada, se for mais nova
+
+    # ---------------- abas ou janelas ----------------
+    def tabs_enabled(self) -> bool:
+        """True: arquivos novos abrem em abas na mesma janela (padrão); False: uma janela por arquivo."""
+        from .config import settings
+        from .updater import _bool
+        return _bool(settings().value("open_in_tabs"), True)
+
+    def set_tabs_enabled(self, on: bool):
+        from .config import settings
+        settings().setValue("open_in_tabs", bool(on))
+        for w in self.windows:
+            w.tabs_mode_changed(bool(on))
+
+    def window_activated(self, w):
+        """A última janela usada fica no fim da lista: é nela que os arquivos novos abrem."""
+        if w in self.windows and self.windows[-1] is not w:
+            self.windows.remove(w)
+            self.windows.append(w)
+
+    def find_open(self, path):
+        """(janela, aba) onde o arquivo já está aberto, ou None."""
+        norm = os.path.normcase(os.path.abspath(path))
+        for w in self.windows:
+            i = w.tab_index_of(norm)
+            if i is not None:
+                return w, i
+        return None
 
     # ---------------- janelas ----------------
     def new_window(self, pdoc=None):
@@ -76,6 +108,10 @@ class Controller:
     def _target_window(self, prefer=None):
         if prefer is not None and prefer.is_empty():
             return prefer
+        if self.tabs_enabled():  # abre como nova aba na janela usada por último
+            if prefer is not None and prefer in self.windows:
+                return prefer
+            return self.windows[-1] if self.windows else self.new_window()
         for w in self.windows:
             if w.is_empty():
                 return w
@@ -83,11 +119,64 @@ class Controller:
 
     def open_files(self, files, prefer=None, organize=False):
         for f in [f for f in files if f]:
-            w = self._target_window(prefer)
-            prefer = None
-            w.load(f, organize=organize)
+            found = self.find_open(f)
+            if found and not organize:  # já está aberto: só mostra a aba
+                w, i = found
+                w.activate_tab(i)
+            else:
+                w = self._target_window(prefer)
+                w.load(f, organize=organize, new_tab=not w.is_empty())
+            if self.tabs_enabled():
+                prefer = w  # os demais arquivos selecionados vão para a mesma janela
+            else:
+                prefer = None
             w.raise_()
             w.activateWindow()
+
+    def show_document(self, pdoc, prefer=None):
+        """Mostra um documento novo (criado, convertido, traduzido...) numa aba ou janela,
+        conforme a preferência. Retorna a janela usada."""
+        w = self._target_window(prefer)
+        if w.is_empty():
+            w.set_document(pdoc)
+        else:
+            w.open_in_new_tab(pdoc)
+        w.raise_()
+        w.activateWindow()
+        return w
+
+    # ---------------- atualizações ----------------
+    def check_updates_later(self):
+        """Verificação automática (no máximo uma vez por dia), sem atrapalhar o uso."""
+        from PySide6.QtCore import QTimer
+        from . import updater as up
+        QTimer.singleShot(30000, up.cleanup_old)
+        if not up.due_for_check():
+            return
+        from .update_dialog import check_async
+
+        def result(info):
+            up.mark_checked()
+            if info.newer:
+                self.update_available(info)
+        QTimer.singleShot(6000, lambda: check_async(result))
+
+    def update_available(self, info):
+        self.update_info = info
+        for w in self.windows:
+            w.show_update_badge(info)
+
+    def install_update(self, kind, prepared):
+        """Fecha todas as janelas (oferecendo salvar) e inicia a instalação."""
+        from . import updater as up
+        for w in list(self.windows):
+            if not w.close():
+                return False
+        from .tasks import wait_all
+        wait_all()
+        up.launch(kind, prepared)
+        self.app.quit()
+        return True
 
     def _dialog(self, dlg):
         """Diálogos independentes (abertos pelo Explorer sem janela principal)."""
@@ -182,8 +271,7 @@ class Controller:
         pdoc = PdfDocument(doc=out)
         pdoc.modified = True
         pdoc.edits.append(f"Combinou {len(files)} arquivos para organizar")
-        w = self._target_window()
-        w.set_document(pdoc)
+        w = self.show_document(pdoc)
         w._converted_name = str(Path(files[0]).with_name("organizado.pdf"))
         w.a_organize.setChecked(True)
         w.toggle_organize()
@@ -227,6 +315,11 @@ def main(argv=None):
     from .config import install_crash_handlers
     install_crash_handlers()
 
+    if special == "--apply-update":  # versão portátil nova substituindo a antiga
+        from .updater import apply_portable_update
+        target = next(a.split("=", 1)[1] for a in argv if a.startswith("--apply-update="))
+        pid = next((a.split("=", 1)[1] for a in argv if a.startswith("--wait-pid=")), "0")
+        return apply_portable_update(target, int(pid) if pid.isdigit() else 0)
     if special == "--selftest":
         from .selftest import run
         return run()
@@ -282,6 +375,7 @@ def main(argv=None):
         200, lambda: app.quit() if not ctrl.windows and not ctrl.dialogs else None))
     if action == "open":
         ctrl.handle("open", files)
+        ctrl.check_updates_later()
     else:
         ctrl.server.add(action, files)  # aguarda os demais arquivos selecionados chegarem
     return app.exec()

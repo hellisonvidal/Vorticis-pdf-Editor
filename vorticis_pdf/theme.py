@@ -91,6 +91,10 @@ QTableCornerButton::section { background: $bg; border: none; }
 QTabWidget::pane { border: 1px solid $border; border-radius: 10px; background: $surface; top: -1px; }
 QTabBar::tab { padding: 8px 16px; border: none; color: $muted; background: transparent; }
 QTabBar::tab:selected { color: $accent_text; border-bottom: 2px solid $accent; font-weight: 600; }
+#DocTabs { background: $surface; border: none; border-bottom: 1px solid $border; }
+#DocTabs::tab { padding: 6px 10px 6px 12px; max-width: 260px; border-right: 1px solid $border; }
+#DocTabs::tab:selected { background: $bg; color: $text; }
+#DocTabs::tab:hover:!selected { background: $hover; }
 QGroupBox { border: 1px solid $border; border-radius: 10px; margin-top: 14px; padding: 12px 10px 8px; background: $surface; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: $muted; font-weight: 600; }
 QCheckBox, QRadioButton { spacing: 7px; background: transparent; }
