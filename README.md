@@ -28,6 +28,14 @@ O build automático testa cada versão num Windows limpo antes de publicá-la. O
 * Zoom por `Ctrl` + roda do mouse, `Ctrl` `+` / `-`, ajuste à largura ou página inteira, além de 25 % a 400 %.
 * Painel de **miniaturas** com tamanho ajustável (controle deslizante ou `Ctrl` + roda) e **visualização ampliada** de qualquer página (barra de espaço ou duplo clique).
 * Busca de texto (`Ctrl+F`), seleção e cópia de texto.
+* **A tela fica onde está:** escolher uma ferramenta, mostrar ou esconder barras, mudar o ajuste do zoom, girar páginas, desfazer ou refazer não fazem mais a página pular para o início.
+
+### Abas ou janelas
+* Cada arquivo aberto vira uma **aba** na mesma janela (padrão). Clique na aba para trocar de documento. Cada aba guarda o zoom, o lugar da página e o próprio desfazer/refazer.
+* `Ctrl+Tab` / `Ctrl+Shift+Tab` (ou `Ctrl+PgDown` / `Ctrl+PgUp`) passam de aba, `Ctrl+W` fecha o documento atual e `Ctrl+Shift+W` fecha a janela. As abas podem ser arrastadas para mudar a ordem.
+* O botão direito numa aba oferece: fechar, fechar as outras abas, **mover para uma nova janela** e abrir a pasta do arquivo.
+* Abrir um arquivo que já está aberto apenas mostra a aba dele.
+* Prefere **uma janela por arquivo**? Desmarque **Exibir › Abrir arquivos em abas**. A escolha vale também para os arquivos abertos pelo Explorer.
 
 ### Selecionar texto, sem escolher ferramenta
 Com **nenhuma ferramenta ativa**:
@@ -47,6 +55,7 @@ Ative **Seleção por retângulos** (`S`, primeiro botão da barra lateral):
   * a barra de edição tem localizar e substituir em todos e pode trocar fonte, tamanho ou cor de todos. Por padrão, cada texto mantém a sua fonte original;
   * cada texto é ajustado para não sobrepor linhas e marcações.
   * A edição inteira vira um único passo de desfazer.
+* **Mover textos:** arraste qualquer texto selecionado com o mouse para mover todos os textos selecionados juntos. Uma prévia mostra o texto no novo lugar enquanto você arrasta. Com `Shift`, o movimento fica só na horizontal ou só na vertical. As setas do teclado movem 1 pt (`Shift` + seta: 10 pt). Os textos mantêm fonte, tamanho e cor, linhas e textos vizinhos não são tocados, e `Ctrl+Z` desfaz.
 * A barra da seleção também permite copiar, destacar, sublinhar e excluir os textos selecionados.
 
 ### Criar um PDF do zero
@@ -196,6 +205,13 @@ Use a ferramenta **Assinar** na barra lateral (`G`) e arraste a área onde o car
 * **Exibir › Tema:** *Seguir o Windows* (padrão), *Claro* ou *Escuro*. O botão ☾ / ☀ na barra superior alterna entre eles (`Ctrl+Shift+T`).
 * Toda a interface está em **português do Brasil**, inclusive os botões e janelas padrão do sistema (Salvar, Cancelar, seletor de arquivos, impressão, cores) e as mensagens de erro técnicas mais comuns.
 
+### Atualizações pelo próprio programa
+* **Ajuda › Verificar atualizações...** mostra as novidades da versão nova e, com **Atualizar agora**, baixa, confere a soma SHA-256 publicada e instala sem precisar abrir o navegador:
+  * **instalado:** o instalador novo roda sozinho, sem perguntas, mantendo o modo da instalação anterior (só para você ou para todos). O programa abre de novo no fim;
+  * **portátil:** a versão nova é copiada por cima da pasta do programa. A pasta `dados`, com configurações e histórico, é mantida.
+* Antes de instalar, o programa fecha e oferece salvar os documentos com alterações.
+* Uma vez por dia, ao abrir o programa, ele procura versões novas em segundo plano. Quando há uma, aparece o botão **Atualizar para a versão x.y.z** na barra de status. Para desligar, desmarque **Ajuda › Verificar atualizações automaticamente**.
+
 ### Diagnóstico de erros
 Se algo der errado, o programa mostra uma mensagem e continua aberto. Os detalhes, inclusive falhas internas, ficam em **Ajuda › Abrir registro de erros** (`vorticis_erros.log`).
 
@@ -242,6 +258,8 @@ vorticis_pdf/
   i18n.py              tradução pt-BR dos componentes padrão do Qt
   shell_integration.py menu de contexto do Explorer (HKCU)
   single_instance.py   agrupa os arquivos selecionados no Explorer
+  updater.py           atualizações: consulta as Releases, baixa, confere e instala
+  update_dialog.py     janela "Atualização disponível" e verificação automática
 ```
 
 ## Licença

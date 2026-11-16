@@ -9,8 +9,8 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSlider,
-    QSpinBox, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QSlider,
+    QSpinBox, QSplitter, QStackedWidget, QTabBar, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import APP_NAME
@@ -37,6 +37,17 @@ from .thumbnails import ThumbList
 MAX_RECENT = 12
 
 
+class DocTab:
+    """Um documento aberto numa aba: o PDF (com o próprio desfazer/refazer) e o lugar da
+    tela onde o usuário estava, para voltar exatamente ali ao trocar de aba."""
+
+    def __init__(self, pdoc: PdfDocument):
+        self.pdoc = pdoc
+        self.save_password: str | None = None
+        self.converted_name = ""
+        self.view_state = None  # (zoom, modo de ajuste, posição)
+
+
 def _sep():
     w = QWidget()
     w.setObjectName("Sep")
@@ -50,7 +61,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ctrl = controller
         self.pdoc: PdfDocument | None = None
-        self.save_password: str | None = None
+        self.tabs: list[DocTab] = []
+        self._cur_tab: int | None = None
         self.search_index = 0
         self.settings = settings()
         from .config import app_icon
@@ -72,7 +84,23 @@ class MainWindow(QMainWindow):
         self.welcome = self._build_welcome()
         self.stack.addWidget(self.welcome)
         self.stack.addWidget(self.splitter)
-        self.setCentralWidget(self.stack)
+        self.tab_bar = QTabBar()
+        self.tab_bar.setObjectName("DocTabs")
+        self.tab_bar.setDocumentMode(True)
+        self.tab_bar.setTabsClosable(True)
+        self.tab_bar.setMovable(True)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.setElideMode(Qt.ElideMiddle)
+        self.tab_bar.setUsesScrollButtons(True)
+        self.tab_bar.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tab_bar.hide()
+        central = QWidget()
+        cl = QVBoxLayout(central)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+        cl.addWidget(self.tab_bar)
+        cl.addWidget(self.stack, 1)
+        self.setCentralWidget(central)
 
         self._build_actions()
         self._build_menus()
@@ -280,7 +308,23 @@ class MainWindow(QMainWindow):
         self.a_props = A("Propriedades e fontes...", self.properties, "Ctrl+I", "info",
                          "Metadados, fontes do documento e senha")
         self.a_history = A("Histórico de salvamentos...", lambda: HistoryDialog(self).exec(), None, "history")
-        self.a_close = A("Fechar", self.close, QKeySequence.Close)
+        self.a_close = A("Fechar documento", self.close_current, QKeySequence.Close)
+        self.a_close_win = A("Fechar janela", self.close, "Ctrl+Shift+W")
+        self.a_next_tab = A("Próxima aba", lambda: self._cycle_tab(1), "Ctrl+Tab")
+        self.a_next_tab.setShortcuts([QKeySequence("Ctrl+Tab"), QKeySequence("Ctrl+PgDown")])
+        self.a_prev_tab = A("Aba anterior", lambda: self._cycle_tab(-1), "Ctrl+Shift+Tab")
+        self.a_prev_tab.setShortcuts([QKeySequence("Ctrl+Shift+Tab"), QKeySequence("Ctrl+PgUp")])
+        self.a_tabs_mode = A("Abrir arquivos em abas", lambda on: self.ctrl.set_tabs_enabled(on), None, None,
+                             "Marcado: cada arquivo aberto vira uma aba nesta janela. Desmarcado: cada "
+                             "arquivo abre em uma janela separada.", checkable=True)
+        self.a_tabs_mode.setChecked(self.ctrl.tabs_enabled())
+        self.a_updates = A("Verificar atualizações...", lambda: self.check_updates(), None, None,
+                           "Procura uma versão nova e instala sem sair do programa")
+        from . import updater
+        self.a_auto_update = A("Verificar atualizações automaticamente",
+                               lambda on: updater.set_auto_check(on), None, None,
+                               "Uma vez por dia, ao abrir o programa", checkable=True)
+        self.a_auto_update.setChecked(updater.auto_check_enabled())
         self.a_quit = A("Sair", self.ctrl.quit, QKeySequence.Quit)
         self.a_new_win = A("Nova janela", lambda: self.ctrl.new_window(), "Ctrl+Shift+N")
         self.a_new_pdf = A("Novo PDF...", self.new_pdf, "Ctrl+N", "new_file",
@@ -389,7 +433,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addActions([self.a_print, self.a_props, self.a_history])
         m.addSeparator()
-        m.addActions([self.a_close, self.a_quit])
+        m.addActions([self.a_close, self.a_close_win, self.a_quit])
         m = mb.addMenu("&Editar")
         m.addActions([self.a_undo, self.a_redo])
         m.addSeparator()
@@ -400,6 +444,8 @@ class MainWindow(QMainWindow):
         m.addActions([self.a_zoom_in, self.a_zoom_out, self.a_zoom100, self.a_fit_w, self.a_fit_p])
         m.addSeparator()
         m.addActions([self.a_organize, self.a_thumbs])
+        m.addSeparator()
+        m.addActions([self.a_tabs_mode, self.a_next_tab, self.a_prev_tab])
         m.addSeparator()
         tm = m.addMenu("Tema")
         tm.addActions(list(self.theme_actions.values()))
@@ -419,6 +465,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addActions([self.a_shell_on, self.a_shell_off, self.a_full_menu])
         m = mb.addMenu("Aj&uda")
+        m.addActions([self.a_updates, self.a_auto_update])
+        m.addSeparator()
         m.addActions([self.a_about, self.a_log])
 
     def _build_toolbars(self):
@@ -589,7 +637,7 @@ class MainWindow(QMainWindow):
             bar.addWidget(b)
             self.sel_actions.append(b)
         hint = QLabel("    Arraste para adicionar retângulos • clique num texto para incluir/retirar • "
-                      "Ctrl+A = página inteira • Enter = editar")
+                      "arraste um texto selecionado para movê-lo (setas = 1 pt) • Enter = editar")
         hint.setObjectName("Muted")
         bar.addWidget(hint)
         bar.hide()
@@ -626,6 +674,14 @@ class MainWindow(QMainWindow):
         sb.addWidget(self.st_zoom)
         sb.addWidget(self.st_font)
         sb.addPermanentWidget(self.st_saved)
+        self.st_update = QPushButton()
+        self.st_update.setObjectName("Primary")
+        self.st_update.setCursor(Qt.PointingHandCursor)
+        self.st_update.clicked.connect(lambda: self.check_updates(self.ctrl.update_info))
+        self.st_update.hide()
+        sb.addPermanentWidget(self.st_update)
+        if getattr(self.ctrl, "update_info", None):
+            self.show_update_badge(self.ctrl.update_info)
 
     def _set_saved_badge(self, text, dirty=False):
         self.st_saved.setObjectName("DirtyBadge" if dirty else "SavedBadge")
@@ -651,6 +707,11 @@ class MainWindow(QMainWindow):
         self.view.rectSelectionChanged.connect(self._update_sel_bar)
         self.view.editSelectedRequested.connect(self.edit_selected_texts)
         self.view.deleteSelectedRequested.connect(self.delete_selected_texts)
+        self.view.textsMoveRequested.connect(self.move_selected_texts)
+        self.tab_bar.currentChanged.connect(self._on_tab_changed)
+        self.tab_bar.tabCloseRequested.connect(self.close_tab)
+        self.tab_bar.tabMoved.connect(self._on_tab_moved)
+        self.tab_bar.customContextMenuRequested.connect(self._tab_menu)
         self.thumbs.pageActivated.connect(
             lambda i: self.view.set_current_page(i) if not self.a_organize.isChecked() else None)
         self.thumbs.pagesMoved.connect(self.move_pages)
@@ -687,11 +748,200 @@ class MainWindow(QMainWindow):
         self.st_font.show()
 
     # ================================================================== documento
+    # ---------- abas ----------
+    def _tab(self) -> DocTab | None:
+        if self._cur_tab is None or not (0 <= self._cur_tab < len(self.tabs)):
+            return None
+        return self.tabs[self._cur_tab]
+
+    @property
+    def save_password(self):
+        t = self._tab()
+        return t.save_password if t else None
+
+    @save_password.setter
+    def save_password(self, value):
+        if (t := self._tab()) is not None:
+            t.save_password = value
+
+    @property
+    def _converted_name(self):
+        t = self._tab()
+        return t.converted_name if t else ""
+
+    @_converted_name.setter
+    def _converted_name(self, value):
+        if (t := self._tab()) is not None:
+            t.converted_name = value or ""
+
     def set_document(self, pdoc: PdfDocument | None):
+        """Mostra pdoc na aba atual (substitui o documento dela); cria a aba se não houver."""
+        if pdoc is None:
+            self._show_tab(None)
+            return
+        t = self._tab()
+        if t is None:
+            self._insert_tab(DocTab(pdoc))
+        else:
+            t.pdoc, t.save_password, t.converted_name, t.view_state = pdoc, None, "", None
+            self._show_tab(t)
+        if pdoc.path:
+            self._add_recent(pdoc.path)
+
+    def open_in_new_tab(self, pdoc: PdfDocument):
+        """Abre o documento numa aba nova (a aba atual continua aberta)."""
+        self._insert_tab(DocTab(pdoc))
+        if pdoc.path:
+            self._add_recent(pdoc.path)
+
+    def _insert_tab(self, tab: DocTab):
+        at = len(self.tabs) if self._cur_tab is None else self._cur_tab + 1
+        self.tabs.insert(at, tab)
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.insertTab(at, "")
+        self.tab_bar.blockSignals(False)
+        if self._cur_tab is not None and self._cur_tab >= at:
+            self._cur_tab += 1
+        self._switch_to(at)
+
+    def _switch_to(self, i):
+        if i == self._cur_tab and self._tab() is not None:
+            return
+        if self._tab() is not None:
+            self.finish_inline()  # aplica a edição em andamento no documento que está saindo
+            self._store_view_state()
+        self._cur_tab = i
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.setCurrentIndex(i)
+        self.tab_bar.blockSignals(False)
+        self._show_tab(self._tab())
+
+    def _store_view_state(self):
+        t = self._tab()
+        if t is not None and self.view.doc is not None:
+            t.view_state = (self.view.zoom, self.view.fit_mode, self.view.capture_position())
+
+    def _on_tab_changed(self, i):
+        if 0 <= i < len(self.tabs):
+            self._switch_to(i)
+
+    def _on_tab_moved(self, frm, to):
+        cur = self._tab()
+        self.tabs.insert(to, self.tabs.pop(frm))
+        self._cur_tab = self.tabs.index(cur) if cur in self.tabs else None
+
+    def activate_tab(self, i):
+        if 0 <= i < len(self.tabs):
+            self._switch_to(i)
+
+    def tab_index_of(self, norm_path):
+        for i, t in enumerate(self.tabs):
+            if t.pdoc.path and os.path.normcase(os.path.abspath(t.pdoc.path)) == norm_path:
+                return i
+        return None
+
+    def _cycle_tab(self, step):
+        if len(self.tabs) > 1:
+            self._switch_to((self._cur_tab + step) % len(self.tabs))
+
+    def close_tab(self, i) -> bool:
+        """Fecha a aba i (oferece salvar se houver alterações)."""
+        if not (0 <= i < len(self.tabs)):
+            return False
+        self._switch_to(i)
+        self.finish_inline()
+        if not self.maybe_save():
+            return False
+        self._remove_tab(i)
+        return True
+
+    def _remove_tab(self, i):
+        self.tabs.pop(i)
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.removeTab(i)
+        self.tab_bar.blockSignals(False)
+        self._cur_tab = None
+        if self.tabs:
+            self._switch_to(min(i, len(self.tabs) - 1))
+        else:
+            self._show_tab(None)
+
+    def close_current(self):
+        """Ctrl+W: fecha o documento atual. Abrindo em janelas separadas, com um só documento,
+        fecha a janela (como antes)."""
+        if not self.tabs or (len(self.tabs) == 1 and not self.ctrl.tabs_enabled()):
+            self.close()
+        else:
+            self.close_tab(self._cur_tab)
+
+    def close_other_tabs(self, keep):
+        t = self.tabs[keep]
+        for other in [x for x in self.tabs if x is not t]:
+            if other in self.tabs and not self.close_tab(self.tabs.index(other)):
+                return
+        if t in self.tabs:
+            self._switch_to(self.tabs.index(t))
+
+    def detach_tab(self, i):
+        """Move a aba para uma janela nova (com o desfazer e as alterações ainda não salvas)."""
+        if not (0 <= i < len(self.tabs)) or len(self.tabs) < 2:
+            return
+        if i == self._cur_tab:
+            self.finish_inline()
+        t = self.tabs[i]
+        self._remove_tab(i)
+        w = self.ctrl.new_window(t.pdoc)
+        w.save_password, w._converted_name = t.save_password, t.converted_name
+
+    def _tab_menu(self, pos):
+        i = self.tab_bar.tabAt(pos)
+        if i < 0:
+            return
+        m = QMenu(self)
+        m.addAction("Fechar", lambda: self.close_tab(i))
+        a = m.addAction("Fechar as outras abas", lambda: self.close_other_tabs(i))
+        a.setEnabled(len(self.tabs) > 1)
+        a = m.addAction("Mover para uma nova janela", lambda: self.detach_tab(i))
+        a.setEnabled(len(self.tabs) > 1)
+        path = self.tabs[i].pdoc.path
+        if path:
+            m.addSeparator()
+            m.addAction("Abrir a pasta do arquivo", lambda: open_folder(str(Path(path).parent)))
+        m.addSeparator()
+        m.addAction(self.a_tabs_mode)
+        m.exec(self.tab_bar.mapToGlobal(pos))
+
+    def tabs_mode_changed(self, on):
+        self.a_tabs_mode.blockSignals(True)
+        self.a_tabs_mode.setChecked(on)
+        self.a_tabs_mode.blockSignals(False)
+        self._update_tabs()
+
+    def _update_tabs(self):
+        for i, t in enumerate(self.tabs):
+            p = t.pdoc
+            self.tab_bar.setTabText(i, f"{'● ' if p.modified else ''}{p.title}")
+            self.tab_bar.setTabToolTip(i, p.path or p.title)
+            self.tab_bar.setTabIcon(i, icon("pages", c("muted")))
+        self.tab_bar.setVisible(len(self.tabs) > 1 or (len(self.tabs) == 1 and self.ctrl.tabs_enabled()))
+
+    def _show_tab(self, tab: DocTab | None):
+        pdoc = tab.pdoc if tab else None
         self.pdoc = pdoc
         doc = pdoc.doc if pdoc else None
+        state = tab.view_state if tab else None
+        if state:
+            self.view.zoom, self.view.fit_mode = state[0], state[1]
+        else:
+            self.view.fit_mode = "width"
         self.view.set_document(doc, keep_position=False)
+        if state and doc is not None:
+            self.view.restore_position(state[2])
+        self.view.zoomChanged.emit(self.view.zoom)
         self.thumbs.set_document(doc, invalidate_all=True)
+        self._search_dirty = True
+        if hasattr(self, "search_lbl"):
+            self.search_lbl.setText("")
         has = pdoc is not None
         for a in (self.a_save, self.a_save_as, self.a_print, self.a_props, self.a_export,
                   self.a_rot_r, self.a_rot_l, self.a_del, self.a_dup, self.a_blank, self.a_ins,
@@ -705,13 +955,12 @@ class MainWindow(QMainWindow):
         if not has:
             self._fill_recent_list()
         self._update_state()
-        if pdoc and pdoc.path:
-            self._add_recent(pdoc.path)
 
     def is_empty(self):
         return self.pdoc is None
 
-    def load(self, path: str, organize=False):
+    def load(self, path: str, organize=False, new_tab=False):
+        """Abre o arquivo na aba atual ou, com new_tab=True, numa aba nova."""
         if not path:
             return False
         if not os.path.isfile(path):
@@ -728,13 +977,20 @@ class MainWindow(QMainWindow):
             if not ok or not pdoc.doc.authenticate(pw):
                 QMessageBox.warning(self, APP_NAME, "Senha incorreta.")
                 return False
+        conv_name = ""
         if not pdoc.is_native_pdf():
             # arquivo convertido (imagem, XPS, EPUB...): salvar pede um novo nome .pdf
             pdoc.edits.append(f"Convertido de {Path(path).suffix.upper()[1:]} para PDF")
             pdoc.path = None
             pdoc.modified = True
-            self._converted_name = str(Path(path).with_suffix(".pdf"))
-        self.set_document(pdoc)
+            pdoc.display_name = Path(path).with_suffix(".pdf").name
+            conv_name = str(Path(path).with_suffix(".pdf"))
+        if new_tab:
+            self.open_in_new_tab(pdoc)
+        else:
+            self.set_document(pdoc)
+        if conv_name:
+            self._converted_name = conv_name
         if pdoc.is_native_pdf() and sig.has_signatures(path):
             self.statusBar().showMessage("🔏 Documento assinado digitalmente — Ferramentas › Verificar "
                                          "assinaturas digitais", 12000)
@@ -759,6 +1015,7 @@ class MainWindow(QMainWindow):
     def _update_state(self):
         p = self.pdoc
         if p is None:
+            self._update_tabs()
             self.setWindowTitle(APP_NAME)
             self.page_total.setText(" / 0 ")
             self.page_spin.setMaximum(1)
@@ -773,6 +1030,7 @@ class MainWindow(QMainWindow):
         self.a_undo.setEnabled(p.can_undo())
         self.a_redo.setEnabled(p.can_redo())
         self.a_undo.setToolTip("Desfazer: " + (p._undo[-1][1] if p._undo else ""))
+        self._update_tabs()
         self._on_page(self.view.current)
         if p.modified:
             self._set_saved_badge(f"● {len(p.edits)} alteração(ões) não salva(s)", dirty=True)
@@ -1051,6 +1309,23 @@ class MainWindow(QMainWindow):
         self.view.clear_rect_selection()
         self.refresh(pages=sorted({pg for pg, _sp in items}))
 
+    def move_selected_texts(self, dx, dy):
+        """Arrastar (ou setas) com a ferramenta Seleção: move os textos selecionados."""
+        items = list(self.view.sel_items)
+        if not items or not self.pdoc:
+            return
+        try:
+            moved = self.pdoc.move_texts(items, dx, dy)
+        except Exception as e:
+            from .i18n import friendly
+            QMessageBox.critical(self, APP_NAME, f"Não foi possível mover o texto:\n{friendly(e)}")
+            return
+        if not moved:
+            return
+        self.refresh(pages=sorted({pg for pg, _sp in items}))
+        self.view.reselect_moved(moved)  # a seleção acompanha os textos
+        self.statusBar().showMessage(f"{len(moved)} texto(s) movido(s) • Ctrl+Z desfaz", 4000)
+
     def markup_rect_selection(self, kind):
         by_page = {}
         for pg, sp in self.view.sel_items:
@@ -1259,8 +1534,7 @@ class MainWindow(QMainWindow):
             return
         v = dlg.values()
         pd = create_blank(v["width"], v["height"], v["pages"], v["background"], v["title"])
-        w = self if self.is_empty() else self.ctrl.new_window()
-        w.set_document(pd)
+        w = self.ctrl.show_document(pd, self)
         w._converted_name = str(Path(w.settings.value("last_dir", str(Path.home()))) /
                                 f"{v['title'] or 'Novo documento'}.pdf")
         w.set_tool(V.ADD_TEXT)
@@ -1443,7 +1717,7 @@ class MainWindow(QMainWindow):
                 pd = PdfDocument(doc=newdoc)
                 pd.modified = True
                 pd.edits.append(f"Traduzido para {tr.LANGS.get(target, target)}")
-                w = self.ctrl.new_window(pd)
+                w = self.ctrl.show_document(pd, self)
                 w._converted_name = str(Path(self.pdoc.path or stem).with_name(f"{stem}_traduzido_{target}.pdf"))
             run_task(self, "Traduzindo o documento...", tr.translate_pdf, self.pdoc.doc, pages, target,
                      source, on_done=done, with_progress=True)
@@ -1575,7 +1849,8 @@ class MainWindow(QMainWindow):
         box.setWindowTitle(APP_NAME)
         box.setText(f"{len(files)} arquivo(s) solto(s). O que deseja fazer?")
         b_ins = box.addButton("Inserir no fim deste documento", QMessageBox.AcceptRole)
-        b_open = box.addButton("Abrir em nova janela", QMessageBox.ActionRole)
+        b_open = box.addButton("Abrir em nova aba" if self.ctrl.tabs_enabled() else "Abrir em nova janela",
+                               QMessageBox.ActionRole)
         b_merge = box.addButton("Unir...", QMessageBox.ActionRole)
         box.addButton(QMessageBox.Cancel)
         box.exec()
@@ -1598,12 +1873,57 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e):
         self.finish_inline()
-        if not self.maybe_save():
-            e.ignore()
-            return
+        for t in list(self.tabs):  # oferece salvar cada aba com alterações
+            if t.pdoc.modified and t in self.tabs:
+                self._switch_to(self.tabs.index(t))
+                if not self.maybe_save():
+                    e.ignore()
+                    return
         self.settings.setValue("geometry", self.saveGeometry())
         self.ctrl.window_closed(self)
         e.accept()
+
+    def changeEvent(self, e):
+        from PySide6.QtCore import QEvent
+        if e.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self.ctrl.window_activated(self)
+        super().changeEvent(e)
+
+    # ================================================================== atualizações
+    def show_update_badge(self, info):
+        self.st_update.setText(f"  Atualizar para a versão {info.version}  ")
+        self.st_update.setToolTip("Uma versão nova está disponível. Clique para ver as novidades e instalar.")
+        self.st_update.show()
+
+    def check_updates(self, info=None):
+        """Ajuda › Verificar atualizações: consulta, mostra as novidades e instala."""
+        from . import updater as up
+        if info is None:
+            from .update_dialog import check_async
+            self.statusBar().showMessage("Procurando atualizações…")
+            self.a_updates.setEnabled(False)
+
+            def result(found):
+                self.a_updates.setEnabled(True)
+                self.statusBar().clearMessage()
+                up.mark_checked()
+                if found.newer:
+                    self.ctrl.update_available(found)
+                    self.check_updates(found)
+                else:
+                    from . import __version__
+                    QMessageBox.information(self, APP_NAME, f"Você já está com a versão mais recente ({__version__}).")
+
+            def error(msg):
+                self.a_updates.setEnabled(True)
+                self.statusBar().clearMessage()
+                QMessageBox.warning(self, APP_NAME, f"Não foi possível verificar as atualizações:\n{msg}")
+            check_async(result, error)
+            return
+        from .update_dialog import UpdateDialog
+        dlg = UpdateDialog(self, info)
+        if dlg.exec() and dlg.prepared is not None:
+            self.ctrl.install_update(dlg.kind, dlg.prepared)
 
     def showEvent(self, e):
         super().showEvent(e)

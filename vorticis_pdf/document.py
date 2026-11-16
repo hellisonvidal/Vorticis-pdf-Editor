@@ -514,6 +514,46 @@ class PdfDocument(_ShapeOps):
             self._write_text(page, span["origin"], new_text, font, size, color, span.get("dir", (1, 0)))
         return size
 
+    def move_texts(self, items: list[tuple[int, dict]], dx: float, dy: float) -> list[tuple[int, tuple, str]]:
+        """Move os trechos de texto (dx, dy em pontos, no sentido em que a página aparece na
+        tela, inclusive em páginas giradas). Cada trecho mantém a fonte, o tamanho e a cor;
+        linhas, tabelas e textos vizinhos não são tocados. Um único passo de desfazer.
+        Retorna [(página, retângulo novo, texto)] para a seleção acompanhar os textos."""
+        from .fonts import resolve_font
+        if not items or (abs(dx) < 1e-6 and abs(dy) < 1e-6):
+            return []
+        pages = sorted({pg + 1 for pg, _sp in items})
+        where = f"página {pages[0]}" if len(pages) == 1 else f"{len(pages)} páginas"
+        self.checkpoint(f"Moveu {len(items)} texto(s) ({where})")
+        by_page: dict[int, list[dict]] = {}
+        for pg, sp in items:
+            by_page.setdefault(pg, []).append(sp)
+        moved = []
+        for pg, spans in by_page.items():
+            page = self.doc[pg]
+            m = page.derotation_matrix
+            d = pymupdf.Point(dx, dy) * m - pymupdf.Point(0, 0) * m
+            # a fonte é lida antes de apagar o texto (a fonte embutida continua disponível)
+            plans = []
+            for sp in spans:
+                text = sp["text"].rstrip()
+                if not text.strip():
+                    continue
+                font = resolve_font(self.doc, page, sp["font"], sp.get("flags", 0), text)
+                c = sp.get("color", 0)
+                color = (((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255)
+                plans.append((sp, text, font, color))
+            for sp, *_ in plans:
+                page.add_redact_annot(self._text_band(sp), fill=False)
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                                  text=pymupdf.PDF_REDACT_TEXT_REMOVE)
+            for sp, text, font, color in plans:
+                origin = pymupdf.Point(sp["origin"]) + d
+                self._write_text(page, origin, text, font, sp["size"], color, sp.get("dir", (1, 0)))
+                moved.append((pg, tuple(pymupdf.Rect(sp["bbox"]) + (d.x, d.y, d.x, d.y)), text))
+        return moved
+
     def add_text(self, page_no: int, origin, text: str, font: ResolvedFont, size: float, color):
         self.checkpoint(f"Adicionou texto na página {page_no + 1}")
         self._write_text(self.doc[page_no], origin, text, font, size, color)

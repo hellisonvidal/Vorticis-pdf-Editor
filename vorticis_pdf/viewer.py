@@ -89,6 +89,15 @@ class PageWidget(QWidget):
         m = max(abs(dx), abs(dy))
         return QPointF(a.x() + m * (1 if dx >= 0 else -1), a.y() + m * (1 if dy >= 0 else -1))
 
+    @staticmethod
+    def _constrained_axis(a: QPointF, b: QPointF, shift: bool) -> QPointF:
+        """Com Shift: move só na horizontal ou só na vertical."""
+        if not shift:
+            return b
+        if abs(b.x() - a.x()) >= abs(b.y() - a.y()):
+            return QPointF(b.x(), a.y())
+        return QPointF(a.x(), b.y())
+
     # ---------- pintura ----------
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -129,6 +138,28 @@ class PageWidget(QWidget):
                 p.setPen(QPen(blue, 1.2, Qt.DashLine))
                 p.setBrush(QColor(40, 120, 255, 18))
                 p.drawRect(self.to_screen(r))
+        drag = v.text_drag
+        if drag is not None and (drag.x() or drag.y()):
+            # prévia do arraste: o texto "flutua" no novo lugar; o original fica marcado
+            dpr = self.image.devicePixelRatio() if self.image is not None else 1.0
+            for pg, span in v.sel_items:
+                if pg != self.index:
+                    continue
+                src = self.to_screen(span["bbox"]).adjusted(-1, -1, 1, 1)
+                p.fillRect(src, QColor(255, 255, 255, 170))
+                p.setPen(QPen(blue, 1, Qt.DotLine))
+                p.drawRect(src)
+                dst = src.translated(drag)
+                if self.image is not None:
+                    p.setOpacity(0.85)
+                    p.drawImage(dst, self.image, QRectF(src.x() * dpr, src.y() * dpr,
+                                                        src.width() * dpr, src.height() * dpr))
+                    p.setOpacity(1)
+                p.setBrush(QColor(40, 120, 255, 35))
+                p.setPen(QPen(blue, 1.2))
+                p.drawRect(dst)
+                p.setBrush(Qt.NoBrush)
+            return
         p.setBrush(QColor(40, 120, 255, 55))
         p.setPen(QPen(blue, 1))
         for pg, span in v.sel_items:
@@ -294,6 +325,11 @@ class PageWidget(QWidget):
         elif tool == INK:
             self.mode = "ink"
             self.ink_points = [pos]
+        elif tool == SELECT and self._clicks == 1 and view.selected_item_at(self.index, pt) is not None:
+            # arrastar um texto selecionado move todos os textos selecionados
+            self.mode = "move_text"
+            self.drag_start = self.drag_now = pos
+            view.text_drag = QPointF(0, 0)
         elif tool == SELECT and self._clicks >= 2 and view.item_at(self.index, pt) is not None:
             # clique duplo num texto: garante que ele está selecionado e abre a edição
             sp = view.item_at(self.index, pt)
@@ -329,6 +365,13 @@ class PageWidget(QWidget):
             self.ink_points.append(pos)
             self.update()
             return
+        if self.mode == "move_text" and self.drag_start is not None:
+            self.drag_now = self._constrained_axis(self.drag_start, pos, bool(e.modifiers() & Qt.ShiftModifier))
+            view.text_drag = self.drag_now - self.drag_start
+            self.setCursor(Qt.ClosedHandCursor)
+            for w in view.pages:
+                w.update()
+            return
         if self.mode in ("move", "resize", "area") and self.drag_start is not None:
             self.drag_now = self._constrained(self.drag_start, pos, bool(e.modifiers() & Qt.ShiftModifier)) \
                 if self.mode == "area" else pos
@@ -345,8 +388,11 @@ class PageWidget(QWidget):
                 view.spanHovered.emit(self.index, span)
                 self.update()
         elif tool == SELECT:
-            self.setCursor(Qt.PointingHandCursor if view.item_at(self.index, pt) is not None
-                           else Qt.CrossCursor)
+            if view.selected_item_at(self.index, pt) is not None:
+                self.setCursor(Qt.SizeAllCursor)
+            else:
+                self.setCursor(Qt.PointingHandCursor if view.item_at(self.index, pt) is not None
+                               else Qt.CrossCursor)
         elif tool in (BROWSE, HIGHLIGHT, SHAPE, INK, PAN):
             if self._on_handle(pos):
                 self.setCursor(Qt.SizeFDiagCursor)
@@ -376,6 +422,19 @@ class PageWidget(QWidget):
         if mode == "text":
             if view.tool == HIGHLIGHT and view.selected_text:
                 view.markupRequested.emit("highlight")
+            return
+        if mode == "move_text":
+            a, b = self.drag_start, self.drag_now or e.position()
+            self.drag_start = self.drag_now = None
+            view.text_drag = None
+            self.setCursor(Qt.SizeAllCursor)
+            for w in view.pages:
+                w.update()
+            if (a - b).manhattanLength() < 4:  # foi só um clique: retira o texto da seleção
+                view.toggle_item(self.index, self.to_pdf(b))
+            else:
+                z = view.zoom
+                view.textsMoveRequested.emit((b.x() - a.x()) / z, (b.y() - a.y()) / z)
             return
         if mode == "ink":
             pts = [self.to_pdf(q) for q in self.ink_points]
@@ -440,6 +499,7 @@ class PdfView(QScrollArea):
     rectSelectionChanged = Signal(int)   # quantos textos estão selecionados pelos retângulos
     editSelectedRequested = Signal()
     deleteSelectedRequested = Signal()
+    textsMoveRequested = Signal(float, float)  # deslocamento (pt, como aparece na tela)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -462,6 +522,7 @@ class PdfView(QScrollArea):
         self._render_queue: list[int] = []
         self.text_sel = None      # (página, início, fim) em índices de caractere
         self.sel_annot = None     # (página, xref, retângulo, tipo)
+        self.text_drag = None     # deslocamento em pixels enquanto arrasta textos selecionados
         self.inline = None        # edição de texto na própria página (inline_edit.InlineSession)
         from .document import DEFAULT_STYLE
         self.shape_kind = "rect"
@@ -491,7 +552,7 @@ class PdfView(QScrollArea):
 
     # ---------------- documento ----------------
     def set_document(self, doc: pymupdf.Document | None, keep_position=True):
-        old_page = self.current if keep_position else 0
+        old_pos = self.capture_position() if keep_position else None
         if self.inline is not None:
             self.inline.cancel()
         for w in self.pages:
@@ -516,7 +577,10 @@ class PdfView(QScrollArea):
         self.apply_fit()
         self._relayout()
         self.set_tool(self.tool)
-        self.go_to(min(old_page, doc.page_count - 1))
+        if old_pos is not None:
+            self.restore_position(old_pos)
+        else:
+            self.go_to(0)
 
     def invalidate(self, pages: list[int] | None = None):
         """Força nova renderização (após edição)."""
@@ -570,11 +634,52 @@ class PdfView(QScrollArea):
         self.set_zoom(next((s for s in reversed(ZOOM_STEPS) if s < self.zoom - 0.01), ZOOM_STEPS[0]))
 
     def set_fit(self, mode):
+        pos = self.capture_position()
         self.fit_mode = mode
-        page = self.current
         self.apply_fit()
         self._relayout()
-        self.go_to(page)
+        self.restore_position(pos)
+
+    # ---------- posição da tela ----------
+    def capture_position(self):
+        """Ponto do documento que está no topo da tela: (página, fração da altura da página,
+        fração horizontal do centro). Permite voltar exatamente ao mesmo lugar depois de
+        trocar o zoom, mostrar/esconder barras, desfazer, girar páginas etc."""
+        if not self.pages:
+            return None
+        top = self.verticalScrollBar().value()
+        tops = self._page_tops()
+        idx = len(self.pages) - 1
+        for i, w in enumerate(self.pages):
+            if tops[i] + w.height() + PAGE_GAP > top:
+                idx = i
+                break
+        frac = (top - tops[idx]) / max(1, self.pages[idx].height())
+        hbar = self.horizontalScrollBar()
+        hfrac = (hbar.value() + self.viewport().width() / 2) / max(1, self.container.width())
+        return idx, frac, hfrac
+
+    def restore_position(self, pos):
+        if not self.pages:
+            return
+        if pos is None:
+            self.go_to(0)
+            return
+        idx, frac, hfrac = pos
+        idx = max(0, min(idx, len(self.pages) - 1))
+        top = self._page_tops()[idx]
+        self.verticalScrollBar().setValue(int(round(top + frac * self.pages[idx].height())))
+        self.horizontalScrollBar().setValue(int(round(hfrac * self.container.width() - self.viewport().width() / 2)))
+        self._on_scroll(0)
+
+    def _page_tops(self):
+        """Topo de cada página no contêiner, calculado pelos tamanhos (logo depois de recriar as
+        páginas o layout ainda não as posicionou e todas estariam em y = 0)."""
+        tops, y = [], PAGE_GAP
+        for w in self.pages:
+            tops.append(y)
+            y += w.height() + PAGE_GAP
+        return tops
 
     def _relayout(self):
         if not self.doc:
@@ -595,14 +700,17 @@ class PdfView(QScrollArea):
             self.inline.place_all()  # o zoom mudou: reposiciona as caixas de edição
 
     def resizeEvent(self, e):
+        # barras de ferramentas que aparecem/somem mudam o tamanho da área: a tela continua
+        # mostrando o mesmo trecho do documento (antes pulava para o topo da página)
+        pos = self.capture_position() if self.doc else None
         super().resizeEvent(e)
         if self.fit_mode and self.doc:
-            page = self.current
             self.apply_fit()
             self._relayout()
-            self.go_to(page)
+            self.restore_position(pos)
         elif self.doc:
             self._relayout()
+            self.restore_position(pos)
 
     def wheelEvent(self, e):
         if e.modifiers() & Qt.ControlModifier:
@@ -618,7 +726,7 @@ class PdfView(QScrollArea):
         if not self.pages:
             return
         index = max(0, min(index, len(self.pages) - 1))
-        self.verticalScrollBar().setValue(self.pages[index].y() - PAGE_GAP // 2)
+        self.verticalScrollBar().setValue(self._page_tops()[index] - PAGE_GAP // 2)
         self.set_current_page(index, scroll=False)
 
     def set_current_page(self, index: int, scroll=True):
@@ -632,8 +740,8 @@ class PdfView(QScrollArea):
         if not self.pages:
             return
         mid = self.verticalScrollBar().value() + self.viewport().height() // 3
-        for i, w in enumerate(self.pages):
-            if w.y() + w.height() + PAGE_GAP >= mid:
+        for i, (w, top) in enumerate(zip(self.pages, self._page_tops())):
+            if top + w.height() + PAGE_GAP >= mid:
                 if i != self.current:
                     self.current = i
                     self.pageChanged.emit(i)
@@ -862,6 +970,36 @@ class PdfView(QScrollArea):
                 return sp
         return None
 
+    def selected_item_at(self, index, pt):
+        """Trecho selecionado (ferramenta Seleção) sob o ponto, ou None."""
+        tol = 2 / max(self.zoom, 0.1)
+        for pg, sp in self.sel_items:
+            if pg == index and (pymupdf.Rect(sp["bbox"]) + (-tol, -tol, tol, tol)).contains(pt):
+                return sp
+        return None
+
+    def reselect_moved(self, moved):
+        """Depois de mover textos: a seleção acompanha os textos no novo lugar.
+        moved: [(página, retângulo esperado, texto)]."""
+        items = []
+        for pg, rect, text in moved:
+            if pg >= (self.doc.page_count if self.doc else 0):
+                continue
+            rect = pymupdf.Rect(rect)
+            best, best_d = None, None
+            for sp in self.spans(pg):
+                r = pymupdf.Rect(sp["bbox"])
+                if not r.intersects(rect):
+                    continue
+                d = abs(r.x0 - rect.x0) + abs(r.y0 - rect.y0) + (0 if sp["text"].strip() == text.strip() else 50)
+                if best is None or d < best_d:
+                    best, best_d = sp, d
+            if best is not None and not any(p == pg and s["bbox"] == best["bbox"] for p, s in items):
+                items.append((pg, best))
+        self.rect_sel = []
+        self._extra_items = items
+        self._recompute_items()
+
     def toggle_item(self, index, pt):
         """Clique simples com a ferramenta Seleção: inclui/retira o texto clicado; clicar
         fora de qualquer texto limpa toda a seleção."""
@@ -928,6 +1066,12 @@ class PdfView(QScrollArea):
                 return
             if e.key() in (Qt.Key_Delete, Qt.Key_Backspace):
                 self.deleteSelectedRequested.emit()
+                return
+            arrows = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}
+            if e.key() in arrows:  # setas movem os textos selecionados (Shift = 10 pt)
+                step = 10 if e.modifiers() & Qt.ShiftModifier else 1
+                dx, dy = arrows[e.key()]
+                self.textsMoveRequested.emit(dx * step, dy * step)
                 return
         if e.key() == Qt.Key_A and e.modifiers() & Qt.ControlModifier:
             if self.tool == SELECT:  # seleciona todos os textos da página atual
